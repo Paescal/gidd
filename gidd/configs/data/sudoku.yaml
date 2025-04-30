@@ -2,5 +2,4 @@ defaults:
   - defaults
 
 dataset_name: Ritvik19/Sudoku-Dataset
-tokenizer_name: sudoku
-# pre_tokenize: 
+tokenizer_name: tokenizers/sudoku
