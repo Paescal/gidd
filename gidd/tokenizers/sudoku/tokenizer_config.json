@@ -1,6 +1,6 @@
 {
   "added_tokens_decoder": {
-    "10": {
+    "9": {
       "content": "[PAD]",
       "lstrip": false,
       "normalized": false,
@@ -8,15 +8,15 @@
       "single_word": false,
       "special": true
     },
-    "11": {
-      "content": "[MASK]",
+    "10": {
+      "content": "0",
       "lstrip": false,
       "normalized": false,
       "rstrip": false,
       "single_word": false,
       "special": true
     },
-    "12": {
+    "11": {
       "content": "[UNK]",
       "lstrip": false,
       "normalized": false,
@@ -26,7 +26,7 @@
     }
   },
   "clean_up_tokenization_spaces": false,
-  "mask_token": "[MASK]",
+  "mask_token": "0",
   "model_max_length": 1000000000000000019884624838656,
   "pad_token": "[PAD]",
   "tokenizer_class": "PreTrainedTokenizerFast",

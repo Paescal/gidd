@@ -1,6 +1,6 @@
 {
   "mask_token": {
-    "content": "[MASK]",
+    "content": "0",
     "lstrip": false,
     "normalized": false,
     "rstrip": false,

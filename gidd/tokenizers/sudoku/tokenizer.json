@@ -4,7 +4,7 @@
   "padding": null,
   "added_tokens": [
     {
-      "id": 10,
+      "id": 9,
       "content": "[PAD]",
       "single_word": false,
       "lstrip": false,
@@ -13,8 +13,8 @@
       "special": true
     },
     {
-      "id": 11,
-      "content": "[MASK]",
+      "id": 10,
+      "content": "0",
       "single_word": false,
       "lstrip": false,
       "rstrip": false,
@@ -22,7 +22,7 @@
       "special": true
     },
     {
-      "id": 12,
+      "id": 11,
       "content": "[UNK]",
       "single_word": false,
       "lstrip": false,
@@ -33,26 +33,30 @@
   ],
   "normalizer": null,
   "pre_tokenizer": {
-    "type": "Whitespace"
+    "type": "Split",
+    "pattern": {
+      "String": ""
+    },
+    "behavior": "Removed",
+    "invert": false
   },
   "post_processor": null,
   "decoder": null,
   "model": {
     "type": "WordLevel",
     "vocab": {
-      "0": 0,
-      "1": 1,
-      "2": 2,
-      "3": 3,
-      "4": 4,
-      "5": 5,
-      "6": 6,
-      "7": 7,
-      "8": 8,
-      "9": 9,
-      "[PAD]": 10,
-      "[MASK]": 11,
-      "[UNK]": 12
+      "1": 0,
+      "2": 1,
+      "3": 2,
+      "4": 3,
+      "5": 4,
+      "6": 5,
+      "7": 6,
+      "8": 7,
+      "9": 8,
+      "[PAD]": 9,
+      "0": 10,
+      "[UNK]": 11
     },
     "unk_token": "[UNK]"
   }
