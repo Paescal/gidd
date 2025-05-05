@@ -8,3 +8,5 @@ wandb
 .vscode
 logs
 cache
+gidd/datasets/*
+!gidd/datasets/build_datasets.py

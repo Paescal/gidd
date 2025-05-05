@@ -19,7 +19,7 @@ def get_dataset(config, num_proc=32):
     n_proc = min(os.cpu_count(), num_proc)
     if config.data.local_dataset:
         # TODO?: run dataloading script to download and prepare the dataset if it does not exist
-        ds = load_from_disk(f"datasets/{config.data.dataset_name}{('_' + config.data.dataset_subset) if config.data.dataset_subset else ''}")
+        ds = load_from_disk(f"datasets/{config.data.dataset_name}{('_' + config.data.dataset_subset) if config.data.dataset_subset else ''}/train")
         train_ds = ds[:-test_size]
         test_ds = ds[-test_size:]
     else:
