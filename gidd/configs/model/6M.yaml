@@ -1,6 +1,6 @@
-hidden_size: 512 # d
-cond_dim: 128 # used in models/dit.py
-n_blocks: 8 # used in models/dit.py, L?
-n_heads: 8 # H
+hidden_size: 256
+cond_dim: 128
+n_blocks: 6
+n_heads: 6
 dropout: 0.0
-max_seq_len: 512 # used in models/dit.py
+max_seq_len: 81 # power of 2?
