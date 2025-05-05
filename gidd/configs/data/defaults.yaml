@@ -7,3 +7,4 @@ max_add_padding: 0
 trust_remote_code: False
 dataset_subset: null
 cache_dir: ./cache
+local_dataset: false
