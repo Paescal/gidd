@@ -4,5 +4,5 @@ defaults:
 # dataset_name: Ritvik19/Sudoku-Dataset # full HF dataset
 dataset_name: sudoku
 dataset_subset: 3m
-tokenizer_name: tokenizers/sudoku
+tokenizer_name: /local/home/prisold/gidd/gidd/tokenizers/sudoku
 local_dataset: true
