@@ -29,6 +29,24 @@
       "rstrip": false,
       "normalized": false,
       "special": true
+    },
+    {
+      "id": 12,
+      "content": "[BOS]",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 13,
+      "content": "[EOS]",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
     }
   ],
   "normalizer": null,
@@ -56,7 +74,9 @@
       "9": 8,
       "[PAD]": 9,
       "0": 10,
-      "[UNK]": 11
+      "[UNK]": 11,
+      "[BOS]": 12,
+      "[EOS]": 13
     },
     "unk_token": "[UNK]"
   }

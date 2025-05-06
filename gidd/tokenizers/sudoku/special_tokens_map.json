@@ -1,4 +1,18 @@
 {
+  "bos_token": {
+    "content": "[BOS]",
+    "lstrip": false,
+    "normalized": false,
+    "rstrip": false,
+    "single_word": false
+  },
+  "eos_token": {
+    "content": "[EOS]",
+    "lstrip": false,
+    "normalized": false,
+    "rstrip": false,
+    "single_word": false
+  },
   "mask_token": {
     "content": "0",
     "lstrip": false,
