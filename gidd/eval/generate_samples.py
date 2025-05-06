@@ -22,7 +22,8 @@ def main(args):
     config.training.eval_batch_size = args.batch_size
     dtype = parse_dtype(config.training.dtype)
 
-    sampler = get_sampler(config, model, tokenizer, noise_schedule, min_p=args.min_p)
+    # TODO: remove compile_step set to False for sudoku for newer GPUs
+    sampler = get_sampler(config, model, tokenizer, noise_schedule, compile_step=(config.data.dataset_name != 'sudoku'), min_p=args.min_p)
     model.eval()
 
     samples = []
@@ -30,7 +31,8 @@ def main(args):
         with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
             for i in range(0, args.num_samples, args.batch_size):
                 bs = min(args.batch_size, args.num_samples - i)
-                z_t = sampler.generate(bs, args.num_denoising_steps, decode=False, show_progress=False)
+                # TODO: how is the max_length in SamplerInstance.model.config.max_seq_len set? Once that is done automatically forr sudoku, no need to pass it here
+                z_t = sampler.generate(bs, args.num_denoising_steps, max_length=config.model.max_seq_len, decode=False, show_progress=False)
                 samples.append(z_t)
                 pbar.update(bs)
     samples = torch.cat(samples, dim=0).cpu()

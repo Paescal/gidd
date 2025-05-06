@@ -63,6 +63,9 @@ class GiddSampler(Sampler):
             beta_pi_ts_at_zt = beta_pi_ts.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
             q_ts = (alpha_ts * vz_t + beta_pi_ts_at_zt)
 
+            print(f'------------num classes (different tokens): {vz_t.shape}')
+            print(f'------------type of alpha_ts, q_ts, q_s, q_zt: {type(alpha_ts)} , {type(q_ts)}, {type(q_s)}, {type(q_zt)}')
+            print(f'------------shape of beta_pi_ts_at_zt, alpha_ts, q_ts, q_s, q_zt: {beta_pi_ts_at_zt.shape} ,{alpha_ts.shape}, {q_ts.shape}, {q_s.shape}, {q_zt.shape}')
             q_st = q_ts * q_s / q_zt
             if self.min_p > 0.0:
                 is_small = (q_st < self.min_p).float()
