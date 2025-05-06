@@ -19,9 +19,10 @@ def get_dataset(config, num_proc=32):
     n_proc = min(os.cpu_count(), num_proc)
     if config.data.local_dataset:
         # TODO?: run dataloading script to download and prepare the dataset if it does not exist
-        ds = load_from_disk(f"datasets/{config.data.dataset_name}{('_' + config.data.dataset_subset) if config.data.dataset_subset else ''}/train")
-        train_ds = ds[:-test_size]
-        test_ds = ds[-test_size:]
+        ds = load_from_disk(f"/local/home/prisold/gidd/gidd/datasets/{config.data.dataset_name}{('_' + config.data.dataset_subset) if config.data.dataset_subset else ''}/train")
+        ds = ds.train_test_split(test_size=test_size)
+        train_ds = ds['train']
+        test_ds = ds['test']
     else:
         train_ds = load_dataset(
             config.data.dataset_name,
