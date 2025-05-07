@@ -358,7 +358,13 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
     self.config = config
     self.vocab_size = vocab_size
-    self.rounded_vocab_size = vocab_size + (128 - vocab_size % 128) % 128
+    # TODO: Whether or not to pad the vocab size is not clear. Test both cases.
+    # If padded, the tokenizer needs to be padded as well.
+    round_vocab = True
+    if round_vocab:
+      self.rounded_vocab_size = vocab_size
+    else:
+      self.rounded_vocab_size = vocab_size + (128 - vocab_size % 128) % 128
 
     self.vocab_embed = EmbeddingLayer(config.model.hidden_size, self.rounded_vocab_size)
     self.sigma_map = TimestepEmbedder(config.model.cond_dim)
