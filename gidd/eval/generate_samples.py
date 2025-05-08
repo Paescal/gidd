@@ -22,7 +22,8 @@ def main(args):
     config.training.eval_batch_size = args.batch_size
     dtype = parse_dtype(config.training.dtype)
 
-    sampler = get_sampler(config, model, tokenizer, noise_schedule, min_p=args.min_p)
+    # TODO: set the compile_step based on generate config
+    sampler = get_sampler(config, model, tokenizer, noise_schedule, compile_step=False, min_p=args.min_p)
     model.eval()
 
     samples = []
@@ -36,7 +37,8 @@ def main(args):
                 pbar.update(bs)
     samples = torch.cat(samples, dim=0).cpu()
 
-    torch.save(samples, hydra.utils.to_absolute_path(args.samples_path))
+    # Save in the folder of the model train run
+    torch.save(samples, hydra.utils.to_absolute_path(args.path + "../../samples/" + args.samples_path))
 
 
 if __name__ == "__main__":
