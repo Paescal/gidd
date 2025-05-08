@@ -1,13 +1,14 @@
 defaults:
   - defaults
 
-# dataset_name: Ritvik19/Sudoku-Dataset # full HF dataset
-# dataset_name: sudoku
+dataset_name: sudoku
+dataset_subset: 3m
+# dataset_name: gidd/datasets/sudoku/train/
 # dataset_subset: 3m
+
 # tokenizer_name: /local/home/prisold/gidd/gidd/tokenizers/sudoku
 # padded_vocab: false
-dataset_name: gidd/datasets/sudoku/train/
-dataset_subset: 3m
 tokenizer_name: /local/home/prisold/gidd/gidd/tokenizers/sudoku_padded
 padded_vocab: true
+
 local_dataset: true

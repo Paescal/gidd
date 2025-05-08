@@ -12,10 +12,12 @@ def build_sudoku_dataset():
     ds_train = ds['train'].select_columns(['solution'])
     ds_evaluate = ds['test']
     ds_train = ds_train.rename_column('solution', 'text')
-    # ds_train.save_to_disk(f"gidd/datasets/sudoku_{subset}/train")
-    # ds_evaluate.save_to_disk(f"gidd/datasets/sudoku_{subset}/evaluate")
+
+    ds_train.save_to_disk(f"gidd/datasets/sudoku_{subset}/train")
+    ds_evaluate.save_to_disk(f"gidd/datasets/sudoku_{subset}/evaluate")
     ds_train.to_parquet(f"gidd/datasets/sudoku/train/{subset}.parquet")
     ds_evaluate.to_parquet(f"gidd/datasets/sudoku/evaluate/{subset}.parquet")
+
     print(ds_train)
     print(ds_evaluate)
 

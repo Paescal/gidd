@@ -396,6 +396,7 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
   def forward(self, indices, sigma):
     x = self.vocab_embed(indices)
+    # TODO: reduce embedding size by 1 and concat a mask indicating whether the token is given by the sudoku puzzle or not
     c = F.silu(self.sigma_map(sigma))
 
     rotary_cos_sin = self.rotary_emb(x)
