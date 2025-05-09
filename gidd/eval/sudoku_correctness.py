@@ -28,8 +28,9 @@ from gidd.checkpoints import load_checkpoint
 from gidd.sampling import get_sampler
 
 
-# @hydra.main(config_path="../configs", config_name="generate", version_base="1.1")
-def evaluate_sudoku(args):
+@hydra.main(config_path="../configs", config_name="generate_from_puzzle", version_base="1.1")
+# def evaluate_sudoku(args):
+def main(args):
 
     def add_bos_eos(examples, cols):
         for col in cols:
@@ -48,18 +49,20 @@ def evaluate_sudoku(args):
     dtype = parse_dtype(config.training.dtype)
 
     ds_eval = load_from_disk(f"/local/home/prisold/gidd/gidd/datasets/{config.data.dataset_name}{('_' + config.data.dataset_subset) if config.data.dataset_subset else ''}/evaluate")
+    ds_eval = ds_eval.select(range(16))
     num_samples = ds_eval.num_rows
     
     print(f"Evaluating model from {args.checkpoint_path} on {num_samples} samples")
     
-    ds_eval = ds_eval.map(partial(add_bos_eos, cols=['puzzle', 'solution']), batched=True)
+    # ds_eval = ds_eval.map(partial(add_bos_eos, cols=['puzzle', 'solution']), batched=True)
+    ds_eval = ds_eval.map(partial(add_bos_eos, cols=['puzzle']), batched=True)
     puzzles = ds_eval.select_columns(['puzzle'])
     solutions = ds_eval.select_columns(['solution'])
 
-    puzzles_tokenized = np.array(tokenizer(puzzles['puzzle'])['input_ids'])
-    solutions_tokenized = np.array(tokenizer(solutions['solution'])['input_ids'])
-    puzzles_mask = (puzzles_tokenized != tokenizer.mask_token_id).astype(int)
-    # TODO: set the compile_step based on something
+    puzzles_tokenized = torch.tensor(tokenizer(puzzles['puzzle'])['input_ids'])
+    solutions_tokenized = torch.tensor(tokenizer(solutions['solution'])['input_ids'])
+    puzzles_mask = (puzzles_tokenized != tokenizer.mask_token_id).to(int)
+    # TODO: set compile_step based on something
     sampler = get_sampler(config, model, tokenizer, noise_schedule, compile_step=False, min_p=args.min_p)
     model.eval()
 
@@ -74,5 +77,22 @@ def evaluate_sudoku(args):
                 samples.append(z_t)
                 pbar.update(bs)
     samples = torch.cat(samples, dim=0).cpu()
+    samples = samples[:, 1:-1]
+    print(samples[0])
     #TODO: evaluate correctness
-    print(type(samples))
+    scores = (solutions_tokenized == samples).to(int)
+    scores = torch.sum(scores, dim=-1)
+    print(f"Number of correct cells (max is {config.model.max_seq_len - 2}): {scores}")
+    print(f"number of correct samples: {torch.sum(scores == (config.model.max_seq_len - 2))}")
+
+    samples_decoded = np.array([tokenizer.decode(samples[i], skip_special_tokens=False, clean_up_tokenization_spaces=False).split() for i in range(len(samples))])
+    sudoku_size = int(config.model.max_seq_len ** 0.5)
+    print(samples_decoded[0])
+    samples_decoded = samples_decoded.reshape((-1, sudoku_size, sudoku_size))
+    print(samples_decoded[0])
+    set_score = [row_col_set_score(sample) for sample in samples_decoded]
+    print(f"Set scores (max is {sudoku_size * sudoku_size * 2}): {set_score}")
+
+
+if __name__ == "__main__":
+    main()
