@@ -80,9 +80,6 @@ class GiddSampler(Sampler):
             beta_pi_ts_at_zt = beta_pi_ts.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
             q_ts = (alpha_ts * vz_t + beta_pi_ts_at_zt)
 
-            print(f'------------num classes (different tokens): {vz_t.shape}')
-            print(f'------------type of alpha_ts, q_ts, q_s, q_zt: {type(alpha_ts)} , {type(q_ts)}, {type(q_s)}, {type(q_zt)}')
-            print(f'------------shape of beta_pi_ts_at_zt, alpha_ts, q_ts, q_s, q_zt: {beta_pi_ts_at_zt.shape} ,{alpha_ts.shape}, {q_ts.shape}, {q_s.shape}, {q_zt.shape}')
             q_st = q_ts * q_s / q_zt
             if self.min_p > 0.0:
                 is_small = (q_st < self.min_p).float()
@@ -111,8 +108,8 @@ class GiddSampler(Sampler):
         ts = torch.linspace(0, 1, num_denoising_steps + 1, device=device).unsqueeze(-1)
         ts = (1 - 2 * self.t_eps) * ts + self.t_eps
         # TODO: initial t depends on how many tokens are given for each puzzle.
-        # Use different number of steps for different puzzles? Or just set initial t to the same (max?) value?
-        initial_t = int((max_length - torch.max(torch.sum(mask, dim=-1))) * num_denoising_steps / max_length)
+        # Use different number of steps for different puzzles? Or just set initial t to the same (min) value?
+        initial_t = int((max_length - torch.min(torch.sum(mask, dim=-1))) * num_denoising_steps / max_length)
         
         initial_z_t = initial_z_t.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
