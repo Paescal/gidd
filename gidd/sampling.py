@@ -33,7 +33,24 @@ class Sampler(nn.Module):
             return texts
         else:
             return z_t
+    
+    @abstractmethod
+    def _do_generate_from_given(self, initial_z_t, mask, num_denoising_steps, max_length, show_progress, device):
+        raise NotImplementedError
+    
+    # Generate starting from a given z_t, the mask is a tensor with the same shape as z_t of 0s and 1s, where 1 indicates that the token is given and won't be changed
+    @torch.no_grad()
+    def generate_from_given(self, z_t, mask=None, num_denoising_steps=1000, max_length=None, decode=True, show_progress=True):
+        max_length = max_length or self.model.config.max_seq_len
+        device = next(self.model.parameters()).device
 
+        z_t = self._do_generate_from_given(z_t, mask=mask, num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device)
+
+        if decode:
+            texts = self.tokenizer.batch_decode(z_t, skip_special_tokens=True)
+            return texts
+        else:
+            return z_t
 
 class GiddSampler(Sampler):
     class DenoisingStep(nn.Module):
@@ -88,6 +105,21 @@ class GiddSampler(Sampler):
         z_t = self.noise_schedule.sample_prior((num_samples, max_length)).to(device, non_blocking=True)
         for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
             z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)]).clone()
+        return z_t
+    
+    def _do_generate_from_given(self, initial_z_t, mask, num_denoising_steps, max_length, show_progress, device):
+        ts = torch.linspace(0, 1, num_denoising_steps + 1, device=device).unsqueeze(-1)
+        ts = (1 - 2 * self.t_eps) * ts + self.t_eps
+        # TODO: initial t depends on how many tokens are given for each puzzle.
+        # Use different number of steps for different puzzles? Or just set initial t to the same (max?) value?
+        initial_t = int((max_length - torch.max(torch.sum(mask, dim=-1))) * num_denoising_steps / max_length)
+        
+        initial_z_t = initial_z_t.to(device, non_blocking=True)
+        mask = mask.to(device, non_blocking=True)
+        z_t = initial_z_t.clone()
+        for i in tqdm.trange(initial_t - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
+            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)]).clone()
+            z_t = mask * initial_z_t + (1 - mask) * z_t
         return z_t
 
 

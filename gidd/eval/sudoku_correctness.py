@@ -1,15 +1,7 @@
 from transformers import AutoTokenizer
 from datasets import load_from_disk
 
-# eval/generate_samples.py should work for sampling from sudoku model.
-# To start the denoising process from a partially denoised sample, use sampler(instance).sampling_step(), see sampling.py _do_generate()
-
-
-tokenizer = AutoTokenizer.from_pretrained("tokenizers/sudoku_padded")
-
-ds = load_from_disk(f"datasets/sudoku_3m/evaluate")
-solutions = ds['solution']
-puzzles = ds['puzzle']
+# Evaluation for samples from pure noise
 
 # For each row and each column, check whether the numbers 1 to sudoku_size (e.g. 9 for 9x9) are present. If so, add 1 to the score.
 # Expects the sudoku to be a 2D array of shape (sudoku_size, sudoku_size).
@@ -22,3 +14,65 @@ def row_col_set_score(sudoku):
             if str(i + 1) in curr_set:
                 score += 1
     return score
+
+
+# Evaluation for samples starting from puzzles
+import hydra
+import tqdm
+import torch
+import numpy as np
+
+from functools import partial
+from gidd.utils import parse_dtype
+from gidd.checkpoints import load_checkpoint
+from gidd.sampling import get_sampler
+
+
+# @hydra.main(config_path="../configs", config_name="generate", version_base="1.1")
+def evaluate_sudoku(args):
+
+    def add_bos_eos(examples, cols):
+        for col in cols:
+            examples[col] = [tokenizer.bos_token + example + tokenizer.eos_token for example in examples[col]]
+        return examples
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    torch.set_float32_matmul_precision('high')
+    torch.set_grad_enabled(False)
+
+    ckpt_path = hydra.utils.to_absolute_path(args.checkpoint_path)
+
+    model, noise_schedule, tokenizer, config = load_checkpoint(ckpt_path, device=device)
+    model.eval()
+    config.training.eval_batch_size = args.batch_size
+    dtype = parse_dtype(config.training.dtype)
+
+    ds_eval = load_from_disk(f"/local/home/prisold/gidd/gidd/datasets/{config.data.dataset_name}{('_' + config.data.dataset_subset) if config.data.dataset_subset else ''}/evaluate")
+    num_samples = ds_eval.num_rows
+    
+    print(f"Evaluating model from {args.checkpoint_path} on {num_samples} samples")
+    
+    ds_eval = ds_eval.map(partial(add_bos_eos, cols=['puzzle', 'solution']), batched=True)
+    puzzles = ds_eval.select_columns(['puzzle'])
+    solutions = ds_eval.select_columns(['solution'])
+
+    puzzles_tokenized = np.array(tokenizer(puzzles['puzzle'])['input_ids'])
+    solutions_tokenized = np.array(tokenizer(solutions['solution'])['input_ids'])
+    puzzles_mask = (puzzles_tokenized != tokenizer.mask_token_id).astype(int)
+    # TODO: set the compile_step based on something
+    sampler = get_sampler(config, model, tokenizer, noise_schedule, compile_step=False, min_p=args.min_p)
+    model.eval()
+
+    samples = []
+    with tqdm.tqdm(total=num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
+        with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
+            for i in range(0, num_samples, args.batch_size):
+                bs = min(args.batch_size, num_samples - i)
+                # TODO: how is the max_length in SamplerInstance.model.config.max_seq_len set? Once that is done automatically for sudoku, no need to pass it here
+                # Replace generate with custom generate function starting from the puzzle (write in sampling.py)
+                z_t = sampler.generate_from_given(puzzles_tokenized, puzzles_mask, args.num_denoising_steps, max_length=config.model.max_seq_len, decode=False, show_progress=False)
+                samples.append(z_t)
+                pbar.update(bs)
+    samples = torch.cat(samples, dim=0).cpu()
+    #TODO: evaluate correctness
+    print(type(samples))
