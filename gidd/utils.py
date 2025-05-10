@@ -33,19 +33,47 @@ def get_lr(config, lr, step):
         raise ValueError(f"Unknown learning rate schedule: {lr_schedule}")
 
 
+
+def get_position_selection_strategy(config):
+    match config.model.sampling_strategy:
+        case "all":
+            return all_positions
+        case "top_k":
+            return partial(position_top_k, k=config.model.position_selection_startegy_args.top_k, probability_margin=config.model.position_selection_strategy_args.probability_margin)
+        case "top_p":
+            return partial(position_top_p, p=config.model.position_selection_strategy_args.top_p, probability_margin=config.model.position_selection_strategy_args.probability_margin)
+        case "min_p":
+            return partial(position_min_p, p=config.model.position_selection_strategy_args.min_p, probability_margin=config.model.position_selection_strategy_args.probability_margin)
+        
 def get_sampling_strategy(config):
     match config.model.sampling_strategy:
         case "categorical":
             return sample_categorical
-        case "topk":
-            return partial(sample_topk, k=config.model.sampling_startegy_args.top_k)
+        case "top_k":
+            return partial(sample_top_k, k=config.model.sampling_startegy_args.top_k)
         case "top_p":
-            return partial(sample_topk, p=config.model.sampling_strategy_args.top_p)
+            return partial(sample_top_p, p=config.model.sampling_strategy_args.top_p)
         case "min_p":
-            return partial(sample_topk, p=config.model.sampling_strategy_args.min_p)
+            return partial(sample_min_p, p=config.model.sampling_strategy_args.min_p)
 
 @torch.no_grad()
-def sample_categorical(z_t, probs, generator=None):
+def all_positions(probs, generator=None):
+    # return a mask of all 1s
+    pass
+@torch.no_grad()
+def position_top_k(probs, k, probability_margin, generator=None):
+    # compute metric for each position
+    # sample position
+    pass
+@torch.no_grad()
+def position_top_p(probs, p, probability_margin, generator=None):
+    pass
+@torch.no_grad()
+def position_min_p(probs, p, probability_margin, generator=None):
+    pass
+
+@torch.no_grad()
+def sample_categorical(probs, generator=None):
     # return torch.distributions.Categorical(probs=probs).sample()
     uniform = torch.rand(probs.shape[:-1], dtype=probs.dtype, device=probs.device, generator=generator).unsqueeze(-1)
     cumprobs = probs.cumsum(-1)
@@ -54,7 +82,14 @@ def sample_categorical(z_t, probs, generator=None):
     return samples
 
 @torch.no_grad()
-def sample_topk(z_t, probs, k, generator=None):
+def sample_top_k(probs, k, generator=None):
+    # sample updated token
+    pass
+@torch.no_grad()
+def sample_top_p(probs, p, generator=None):
+    pass
+@torch.no_grad()
+def sample_min_p(probs, p, generator=None):
     pass
 
 

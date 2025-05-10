@@ -60,6 +60,7 @@ class GiddSampler(Sampler):
             self.noise_schedule = noise_schedule
             self.tokenizer = tokenizer
             self.min_p = min_p
+            self.position_selection_strategy = get_sampling_strategy(config)
             self.sampling_strategy = get_sampling_strategy(config)
 
         def forward(self, z_t, t, s):
@@ -86,8 +87,11 @@ class GiddSampler(Sampler):
                 is_small = (q_st < self.min_p).float()
                 q_st = (1 - is_small) * q_st
                 q_st = q_st / q_st.sum(-1, keepdim=True)
-            # return sample_categorical(z_t, q_st)
-            return self.sampling_strategy(z_t, q_st)
+
+            update_positions_mask = self.position_selection_strategy(q_st)
+            # TODO: either sample at all positions and the use mask to update chosen positions, or pass mask to the sampling (less computation but sequential dependency)
+            next_z_t = self.sampling_strategy(q_st)
+            return update_positions_mask * next_z_t + (1 - update_positions_mask) * z_t
 
     def __init__(self, config, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
         super().__init__(model, tokenizer, noise_schedule, t_eps=t_eps)
