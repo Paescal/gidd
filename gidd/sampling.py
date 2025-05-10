@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import tqdm.auto as tqdm
 
 from gidd.diffusion_process import NoiseSchedule
-from gidd.utils import sample_categorical
+from gidd.utils import get_sampling_strategy, sample_categorical
 
 
 class Sampler(nn.Module):
@@ -54,12 +54,13 @@ class Sampler(nn.Module):
 
 class GiddSampler(Sampler):
     class DenoisingStep(nn.Module):
-        def __init__(self, model, noise_schedule, tokenizer, min_p=0.0):
+        def __init__(self, config, model, noise_schedule, tokenizer, min_p=0.0):
             super().__init__()
             self.model = model
             self.noise_schedule = noise_schedule
             self.tokenizer = tokenizer
             self.min_p = min_p
+            self.sampling_strategy = get_sampling_strategy(config)
 
         def forward(self, z_t, t, s):
             logits = self.model(z_t, t)
@@ -85,11 +86,12 @@ class GiddSampler(Sampler):
                 is_small = (q_st < self.min_p).float()
                 q_st = (1 - is_small) * q_st
                 q_st = q_st / q_st.sum(-1, keepdim=True)
-            return sample_categorical(q_st)
+            # return sample_categorical(z_t, q_st)
+            return self.sampling_strategy(z_t, q_st)
 
-    def __init__(self, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
+    def __init__(self, config, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
         super().__init__(model, tokenizer, noise_schedule, t_eps=t_eps)
-        self.sampling_step = self.DenoisingStep(model, noise_schedule, tokenizer, min_p=min_p)
+        self.sampling_step = self.DenoisingStep(config, model, noise_schedule, tokenizer, min_p=min_p)
         if compile_step:
             self.sampling_step = torch.compile(self.sampling_step)
 
@@ -108,8 +110,9 @@ class GiddSampler(Sampler):
         ts = torch.linspace(0, 1, num_denoising_steps + 1, device=device).unsqueeze(-1)
         ts = (1 - 2 * self.t_eps) * ts + self.t_eps
         # TODO: initial t depends on how many tokens are given for each puzzle.
-        # Use different number of steps for different puzzles? Or just set initial t to the same (min) value?
-        initial_t = int((max_length - torch.min(torch.sum(mask, dim=-1))) * num_denoising_steps / max_length)
+        # Use different number of steps for different puzzles? Or just set initial t to the same (max) value? Or leave it at num_denoising_steps?
+        # initial_t = int((max_length - torch.min(torch.sum(mask, dim=-1))) * num_denoising_steps / max_length)
+        initial_t = num_denoising_steps
         
         initial_z_t = initial_z_t.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
@@ -211,7 +214,7 @@ class AutoregressiveSampler(Sampler):
 def get_sampler(config, model, tokenizer, noise_schedule: NoiseSchedule, compile_step=True, min_p=0.0):
     if config.model.type == "diffusion":
         if config.model.diffusion_process == "gidd":
-            return GiddSampler(model, tokenizer, noise_schedule, t_eps=config.model.t_eps, compile_step=compile_step, min_p=min_p)
+            return GiddSampler(config, model, tokenizer, noise_schedule, t_eps=config.model.t_eps, compile_step=compile_step, min_p=min_p)
         elif config.model.diffusion_process == "mdlm":
             return MDLMSampler(model, tokenizer, noise_schedule, t_eps=config.model.t_eps, compile_step=compile_step, min_p=min_p)
         else:

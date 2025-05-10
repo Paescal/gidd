@@ -2,7 +2,7 @@ import re
 import math
 
 import torch
-
+from functools import partial
 
 def parse_dtype(dtype):
     if dtype == "fp16":
@@ -33,14 +33,29 @@ def get_lr(config, lr, step):
         raise ValueError(f"Unknown learning rate schedule: {lr_schedule}")
 
 
+def get_sampling_strategy(config):
+    match config.model.sampling_strategy:
+        case "categorical":
+            return sample_categorical
+        case "topk":
+            return partial(sample_topk, k=config.model.sampling_startegy_args.top_k)
+        case "top_p":
+            return partial(sample_topk, p=config.model.sampling_strategy_args.top_p)
+        case "min_p":
+            return partial(sample_topk, p=config.model.sampling_strategy_args.min_p)
+
 @torch.no_grad()
-def sample_categorical(probs, generator=None):
+def sample_categorical(z_t, probs, generator=None):
     # return torch.distributions.Categorical(probs=probs).sample()
     uniform = torch.rand(probs.shape[:-1], dtype=probs.dtype, device=probs.device, generator=generator).unsqueeze(-1)
     cumprobs = probs.cumsum(-1)
     cumprobs[..., -1] = 1 + 1e-4
     samples = torch.searchsorted(cumprobs, uniform, right=True).squeeze(-1)
     return samples
+
+@torch.no_grad()
+def sample_topk(z_t, probs, k, generator=None):
+    pass
 
 
 def calculate_flops_per_batch(config, model, vocab_size, non_emb_params=None, method="hoffmann"):
