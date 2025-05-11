@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import tqdm.auto as tqdm
 
 from gidd.diffusion_process import NoiseSchedule
-from gidd.utils import get_sampling_strategy, sample_categorical
+from gidd.utils import get_position_metric, get_position_sampling_strategy, get_token_sampling_strategy, sample_categorical
 
 
 class Sampler(nn.Module):
@@ -60,8 +60,9 @@ class GiddSampler(Sampler):
             self.noise_schedule = noise_schedule
             self.tokenizer = tokenizer
             self.min_p = min_p
-            self.position_selection_strategy = get_sampling_strategy(config)
-            self.sampling_strategy = get_sampling_strategy(config)
+            self.position_metric = get_position_metric(config)
+            self.position_sampling_strategy = get_position_sampling_strategy(config)
+            self.token_sampling_strategy = get_token_sampling_strategy(config)
 
         def forward(self, z_t, t, s):
             logits = self.model(z_t, t)
@@ -87,11 +88,11 @@ class GiddSampler(Sampler):
                 is_small = (q_st < self.min_p).float()
                 q_st = (1 - is_small) * q_st
                 q_st = q_st / q_st.sum(-1, keepdim=True)
-
-            update_positions_mask = self.position_selection_strategy(q_st)
-            # TODO: either sample at all positions and the use mask to update chosen positions, or pass mask to the sampling (less computation but sequential dependency)
-            next_z_t = self.sampling_strategy(q_st)
-            return update_positions_mask * next_z_t + (1 - update_positions_mask) * z_t
+            
+            metric = self.position_metric(q_st)
+            update_positions = self.position_sampling_strategy(metric)
+            next_z_t, _ = self.token_sampling_strategy(q_st) # TODO: either sample at all positions (no sequential dependency) or sample only at the selected positions (less computation) (by gathering from q_st based on update_positions)
+            return z_t.scatter_(-1, update_positions.unsqueeze(-1), next_z_t.gather(-1, update_positions.unsqueeze(-1)))
 
     def __init__(self, config, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
         super().__init__(model, tokenizer, noise_schedule, t_eps=t_eps)

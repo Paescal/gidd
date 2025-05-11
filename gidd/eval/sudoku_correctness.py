@@ -79,7 +79,7 @@ def main(args):
             for i in range(0, num_samples, args.batch_size):
                 bs = min(args.batch_size, num_samples - i)
                 # TODO: how is the max_length in SamplerInstance.model.config.max_seq_len set? Once that is done automatically for sudoku, no need to pass it here
-                # Replace generate with custom generate function starting from the puzzle (write in sampling.py)
+                # TODO: add parameter to return the generation history
                 z_t = sampler.generate_from_given(puzzles_tokenized, puzzles_mask, args.num_denoising_steps, max_length=config.model.max_seq_len, decode=False, show_progress=False)
                 samples.append(z_t)
                 pbar.update(bs)

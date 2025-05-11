@@ -34,18 +34,25 @@ def get_lr(config, lr, step):
 
 
 
-def get_position_selection_strategy(config):
+def get_position_metric(config):
+    match config.model.position_metric:
+        case "max":
+            return position_metric_max
+        case "margin":
+            return position_metric_margin
+
+def get_position_sampling_strategy(config):
     match config.model.sampling_strategy:
         case "all":
             return all_positions
         case "top_k":
-            return partial(position_top_k, k=config.model.position_selection_startegy_args.top_k, probability_margin=config.model.position_selection_strategy_args.probability_margin)
+            return partial(sample_top_k, k=config.model.position_selection_startegy_args.top_k, indices_only=True)
         case "top_p":
-            return partial(position_top_p, p=config.model.position_selection_strategy_args.top_p, probability_margin=config.model.position_selection_strategy_args.probability_margin)
+            return partial(sample_top_p, p=config.model.position_selection_strategy_args.top_p, indices_only=True)
         case "min_p":
-            return partial(position_min_p, p=config.model.position_selection_strategy_args.min_p, probability_margin=config.model.position_selection_strategy_args.probability_margin)
+            return partial(sample_min_p, p=config.model.position_selection_strategy_args.min_p, indices_only=True)
         
-def get_sampling_strategy(config):
+def get_token_sampling_strategy(config):
     match config.model.sampling_strategy:
         case "categorical":
             return sample_categorical
@@ -57,20 +64,18 @@ def get_sampling_strategy(config):
             return partial(sample_min_p, p=config.model.sampling_strategy_args.min_p)
 
 @torch.no_grad()
-def all_positions(probs, generator=None):
-    # return a mask of all 1s
-    pass
+def position_metric_max(probs):
+    return torch.max(probs, dim=-1).values
+
 @torch.no_grad()
-def position_top_k(probs, k, probability_margin, generator=None):
-    # compute metric for each position
-    # sample position
-    pass
+def position_metric_margin(probs):
+    top_2, _ = torch.topk(probs, 2, dim=-1)
+    return top_2[..., 0] - top_2[..., 1]
+
 @torch.no_grad()
-def position_top_p(probs, p, probability_margin, generator=None):
-    pass
-@torch.no_grad()
-def position_min_p(probs, p, probability_margin, generator=None):
-    pass
+def all_positions(metric):
+    return torch.arange(metric.shape[-1], dtype=metric.dtype, device=metric.device).unsqueeze(0).expand_as(metric)
+
 
 @torch.no_grad()
 def sample_categorical(probs, generator=None):
@@ -82,14 +87,32 @@ def sample_categorical(probs, generator=None):
     return samples
 
 @torch.no_grad()
-def sample_top_k(probs, k, generator=None):
-    # sample updated token
-    pass
+def sample_top_k(metric, k, indices_only=False, generator=None):
+    candidates_metrics, candidates_indices = torch.topk(metric, k, dim=-1)
+    candidates_probs = candidates_metrics / candidates_metrics.sum(-1, keepdim=True)
+
+    chosen_candidates = sample_categorical(candidates_probs, generator=generator).unsqueeze(-1)
+    chosen_indices = torch.gather(candidates_indices, -1, chosen_candidates)
+    if indices_only:
+        return chosen_indices.squeeze(-1)
+    chosen_values = torch.gather(metric, -1, chosen_indices)
+    return chosen_values.squeeze(-1), chosen_indices.squeeze(-1)
+
 @torch.no_grad()
-def sample_top_p(probs, p, generator=None):
+def sample_top_p(metric, p, indices_only=False, generator=None):
+    # candidates_metrics, candidates_indices = # TODO: implement top_p sampling
+    # candidates_probs = candidates_metrics / candidates_metrics.sum(-1, keepdim=True)
+
+    # chosen_candidates = sample_categorical(candidates_probs, generator=generator).unsqueeze(-1)
+    # chosen_indices = torch.gather(candidates_indices, -1, chosen_candidates)
+    # if indices_only:
+    #     return chosen_indices.squeeze(-1)
+    # chosen_values = torch.gather(metric, -1, chosen_indices)
+    # return chosen_values.squeeze(-1), chosen_indices.squeeze(-1)
     pass
+
 @torch.no_grad()
-def sample_min_p(probs, p, generator=None):
+def sample_min_p(metric, p, indices_only=False, generator=None):
     pass
 
 
