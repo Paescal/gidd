@@ -48,7 +48,7 @@ def get_position_sampling_strategy(config):
         case "top_k":
             return partial(sample_top_k, k=config.model.position_selection_startegy_args.top_k, indices_only=True)
         case "top_p":
-            return partial(sample_top_p, p=config.model.position_selection_strategy_args.top_p, indices_only=True)
+            return partial(sample_top_p, p=config.model.position_selection_strategy_args.top_p, normalize_input=True, indices_only=True)
         case "min_p":
             return partial(sample_min_p, p=config.model.position_selection_strategy_args.min_p, indices_only=True)
         
@@ -99,21 +99,39 @@ def sample_top_k(metric, k, indices_only=False, generator=None):
     return chosen_values.squeeze(-1), chosen_indices.squeeze(-1)
 
 @torch.no_grad()
-def sample_top_p(metric, p, indices_only=False, generator=None):
-    # candidates_metrics, candidates_indices = # TODO: implement top_p sampling
-    # candidates_probs = candidates_metrics / candidates_metrics.sum(-1, keepdim=True)
+def sample_top_p(metric, p, normalize_input=False, indices_only=False, generator=None):
+    if normalize_input:
+        metric = metric / metric.sum(-1, keepdim=True)
 
-    # chosen_candidates = sample_categorical(candidates_probs, generator=generator).unsqueeze(-1)
-    # chosen_indices = torch.gather(candidates_indices, -1, chosen_candidates)
-    # if indices_only:
-    #     return chosen_indices.squeeze(-1)
-    # chosen_values = torch.gather(metric, -1, chosen_indices)
-    # return chosen_values.squeeze(-1), chosen_indices.squeeze(-1)
-    pass
+    sorted_metric, sorted_indices = torch.sort(metric, dim=-1, descending=True)
+    cumulative_metrics = sorted_metric.cumsum(-1)
+    cumulative_metrics[..., -1] = 1 + 1e-4
+    sorted_indices_to_ignore = cumulative_metrics >= p
+    sorted_indices_to_ignore[..., 1:] = sorted_indices_to_ignore.clone()[..., :-1]
+    sorted_indices_to_ignore[..., 0] = False
+    masked_sorted_metrics = sorted_metric.masked_fill_(sorted_indices_to_ignore, 0)
+    masked_sorted_metrics_normalize = masked_sorted_metrics / masked_sorted_metrics.sum(-1, keepdim=True)
+
+    chosen_sorted_indices = sample_categorical(masked_sorted_metrics_normalize, generator=generator).unsqueeze(-1)
+    chosen_indices = torch.gather(sorted_indices, -1, chosen_sorted_indices)
+    if indices_only:
+        return chosen_indices.squeeze(-1)
+    chosen_values = torch.gather(metric, -1, chosen_indices)
+    return chosen_values.squeeze(-1), chosen_indices.squeeze(-1)
 
 @torch.no_grad()
 def sample_min_p(metric, p, indices_only=False, generator=None):
-    pass
+    max_metric, _ = torch.max(metric, dim=-1, keepdim=True)
+    metric_threshold = max_metric.expand_as(metric) * p
+    metrics_to_ignore = metric < metric_threshold
+    masked_metric = metric.clone().masked_fill_(metrics_to_ignore, 0)
+    masked_metric_normalized = masked_metric / masked_metric.sum(-1, keepdim=True)
+
+    chosen_indices = sample_categorical(masked_metric_normalized, generator=generator).unsqueeze(-1)
+    if indices_only:
+        return chosen_indices.squeeze(-1)
+    chosen_values = torch.gather(metric, -1, chosen_indices)
+    return chosen_values.squeeze(-1), chosen_indices.squeeze(-1)
 
 
 def calculate_flops_per_batch(config, model, vocab_size, non_emb_params=None, method="hoffmann"):
