@@ -3,6 +3,10 @@ from datasets import load_from_disk
 
 # Evaluation for samples from pure noise
 
+def correct_cells_score(samples, solutions_tokenized):
+    correct_cells = (solutions_tokenized == samples).to(int)
+    return torch.sum(correct_cells, dim=-1)
+
 # For each row and each column, check whether the numbers 1 to sudoku_size (e.g. 9 for 9x9) are present. If so, add 1 to the score.
 # Expects the sudoku to be a 2D array of shape (sudoku_size, sudoku_size).
 def row_col_set_score(sudoku):
@@ -22,6 +26,25 @@ def count_unique_samples(samples):
         # Convert the sample to a tuple (or any hashable type) to add it to the set
         unique_samples.add(tuple(sample))
     return len(unique_samples)
+
+def score_samples(samples, solutions_tokenized, tokenizer):
+    cells_score = correct_cells_score(samples, solutions_tokenized)
+    seq_len = samples.shape[-1]
+    print(f"Number of correct cells (max is {seq_len}): {cells_score}")
+    print(f"Average number of correct cells: {torch.mean(cells_score.float())}")
+    print(f"number of fully correct samples: {torch.sum(cells_score == (seq_len))}")
+
+    samples_decoded = np.array([tokenizer.decode(samples[i], skip_special_tokens=False, clean_up_tokenization_spaces=False).split() for i in range(len(samples))])
+
+    num_unique_samples = count_unique_samples(samples_decoded)
+    print(f"Number of unique samples (of {len(samples_decoded)} total): {num_unique_samples}")
+
+    sudoku_size = int(seq_len ** 0.5)
+    samples_decoded = samples_decoded.reshape((-1, sudoku_size, sudoku_size))
+
+    set_score = [row_col_set_score(sample) for sample in samples_decoded]
+    print(f"Set scores (max is {sudoku_size * sudoku_size * 2}): {set_score}")
+    print(f"Average set score: {np.mean(set_score)}")
 
 # Evaluation for samples starting from puzzles
 import hydra
@@ -80,30 +103,23 @@ def main(args):
                 bs = min(args.batch_size, num_samples - i)
                 # TODO: how is the max_length in SamplerInstance.model.config.max_seq_len set? Once that is done automatically for sudoku, no need to pass it here
                 # TODO: add parameter to return the generation history
-                z_t = sampler.generate_from_given(puzzles_tokenized, puzzles_mask, args.num_denoising_steps, max_length=config.model.max_seq_len, decode=False, show_progress=False)
+                z_t = sampler.generate_from_given(puzzles_tokenized[i:i+bs], puzzles_mask[i:i+bs], args.num_denoising_steps, max_length=config.model.max_seq_len, decode=False, show_progress=False)
                 samples.append(z_t)
                 pbar.update(bs)
-    samples = torch.cat(samples, dim=0).cpu()
-    samples = samples[:, 1:-1]
+    samples = torch.cat(samples, dim=0)
+    post_correction_samples = samples.clone()
 
-    # Evaluate correctness
-    scores = (solutions_tokenized == samples).to(int)
-    scores = torch.sum(scores, dim=-1)
-    print(f"Number of correct cells (max is {config.model.max_seq_len - 2}): {scores}")
-    print(f"Average number of correct cells: {torch.mean(scores.float())}")
-    print(f"number of fully correct samples: {torch.sum(scores == (config.model.max_seq_len - 2))}")
+    samples = samples.cpu()[:, 1:-1]
+    torch.save(samples, hydra.utils.to_absolute_path(ckpt_path + "../../samples/" + "evaluation_samples_pre_correction.pt"))
 
-    samples_decoded = np.array([tokenizer.decode(samples[i], skip_special_tokens=False, clean_up_tokenization_spaces=False).split() for i in range(len(samples))])
-    
-    num_unique_samples = count_unique_samples(samples_decoded)
-    print(f"Number of unique samples (of {len(samples_decoded)} total): {num_unique_samples}")
+    score_samples(samples, solutions_tokenized, tokenizer)
 
-    sudoku_size = int(config.model.max_seq_len ** 0.5)
-    samples_decoded = samples_decoded.reshape((-1, sudoku_size, sudoku_size))
+    with tqdm.tqdm(total=num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
+        with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
+            for i in range(0, num_samples, args.batch_size):
+                bs = min(args.batch_size, num_samples - i)
 
-    set_score = [row_col_set_score(sample) for sample in samples_decoded]
-    print(f"Set scores (max is {sudoku_size * sudoku_size * 2}): {set_score}")
-    print(f"Average set score: {np.mean(set_score)}")
+
 
 
 if __name__ == "__main__":

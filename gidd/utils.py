@@ -69,7 +69,7 @@ def position_metric_max(probs):
 
 @torch.no_grad()
 def position_metric_margin(probs):
-    top_2, _ = torch.topk(probs, 2, dim=-1)
+    top_2 = torch.topk(probs, 2, dim=-1).values
     return top_2[..., 0] - top_2[..., 1]
 
 @torch.no_grad()
@@ -121,7 +121,7 @@ def sample_top_p(metric, p, normalize_input=False, indices_only=False, generator
 
 @torch.no_grad()
 def sample_min_p(metric, p, indices_only=False, generator=None):
-    max_metric, _ = torch.max(metric, dim=-1, keepdim=True)
+    max_metric = torch.max(metric, dim=-1, keepdim=True).values
     metric_threshold = max_metric.expand_as(metric) * p
     metrics_to_ignore = metric < metric_threshold
     masked_metric = metric.clone().masked_fill_(metrics_to_ignore, 0)
