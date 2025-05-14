@@ -181,7 +181,7 @@ def subsample_collator(config, tokenizer, examples, text_key="text"):
         attn_masks.append(attn_mask)
     input_ids = torch.from_numpy(np.array(input_ids)).to(torch.long)
     diffusion_masks_padded = torch.from_numpy(np.array(diffusion_masks_padded)).to(torch.long)
-    attn_masks = torch.from_numpy(np.array(attn_masks)).to(torch.long)
+    attn_masks = torch.from_numpy(np.array(attn_masks)).to(torch.int)
     return BatchEncoding({"input_ids": input_ids, "diffusion_mask": diffusion_masks_padded, "attention_mask": attn_masks}, tensor_type="pt", n_sequences=len(input_ids))
 
 

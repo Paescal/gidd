@@ -22,7 +22,7 @@ class Loss(torch.nn.Module, ABC):
 
         if reduction == "tokenmean":
             # num_tokens = attention_mask.numel()
-            num_tokens = torch.sum(diffusion_mask, dim=-1)
+            num_tokens = torch.sum(diffusion_mask)
             loss = loss.sum() / num_tokens
         else:  # reduction == "none"
             pass
