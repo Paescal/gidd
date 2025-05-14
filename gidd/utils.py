@@ -3,6 +3,7 @@ import math
 
 import torch
 from functools import partial
+from torch.nn.functional import one_hot
 
 def parse_dtype(dtype):
     if dtype == "fp16":
@@ -46,11 +47,11 @@ def get_position_sampling_strategy(config):
         case "all":
             return all_positions
         case "top_k":
-            return partial(sample_top_k, k=config.model.position_selection_startegy_args.top_k, indices_only=True)
+            return partial(sample_top_k, k=config.model.position_selection_startegy_args.top_k, as_mask=True)
         case "top_p":
-            return partial(sample_top_p, p=config.model.position_selection_strategy_args.top_p, normalize_input=True, indices_only=True)
+            return partial(sample_top_p, p=config.model.position_selection_strategy_args.top_p, normalize_input=True, as_mask=True)
         case "min_p":
-            return partial(sample_min_p, p=config.model.position_selection_strategy_args.min_p, indices_only=True)
+            return partial(sample_min_p, p=config.model.position_selection_strategy_args.min_p, indices_only=True, as_mask=True)
         
 def get_token_sampling_strategy(config):
     match config.model.sampling_strategy:
@@ -64,17 +65,23 @@ def get_token_sampling_strategy(config):
             return partial(sample_min_p, p=config.model.sampling_strategy_args.min_p)
 
 @torch.no_grad()
-def position_metric_max(probs):
-    return torch.max(probs, dim=-1).values
+def position_metric_max(probs, diffusion_mask=None):
+    if diffusion_mask is not None:
+        return torch.max(probs, dim=-1).values * diffusion_mask
+    else:
+        return torch.max(probs, dim=-1).values
 
 @torch.no_grad()
-def position_metric_margin(probs):
+def position_metric_margin(probs, diffusion_mask=None):
     top_2 = torch.topk(probs, 2, dim=-1).values
-    return top_2[..., 0] - top_2[..., 1]
+    if diffusion_mask is not None:
+        return (top_2[..., 0] - top_2[..., 1]) * diffusion_mask
+    else:
+        return top_2[..., 0] - top_2[..., 1]
 
 @torch.no_grad()
 def all_positions(metric):
-    return torch.arange(metric.shape[-1], dtype=metric.dtype, device=metric.device).unsqueeze(0).expand_as(metric)
+    return metric != 0
 
 
 @torch.no_grad()
@@ -87,19 +94,19 @@ def sample_categorical(probs, generator=None):
     return samples
 
 @torch.no_grad()
-def sample_top_k(metric, k, indices_only=False, generator=None):
+def sample_top_k(metric, k, as_mask=False, generator=None):
     candidates_metrics, candidates_indices = torch.topk(metric, k, dim=-1)
     candidates_probs = candidates_metrics / candidates_metrics.sum(-1, keepdim=True)
 
     chosen_candidates = sample_categorical(candidates_probs, generator=generator).unsqueeze(-1)
-    chosen_indices = torch.gather(candidates_indices, -1, chosen_candidates)
-    if indices_only:
-        return chosen_indices.squeeze(-1)
-    chosen_values = torch.gather(metric, -1, chosen_indices)
-    return chosen_values.squeeze(-1), chosen_indices.squeeze(-1)
+    chosen_indices = torch.gather(candidates_indices, -1, chosen_candidates).squeeze(-1)
+    if as_mask:
+        return one_hot(chosen_indices, metric.shape[-1])
+    else:
+        return chosen_indices
 
 @torch.no_grad()
-def sample_top_p(metric, p, normalize_input=False, indices_only=False, generator=None):
+def sample_top_p(metric, p, as_mask=False, normalize_input=False, generator=None):
     if normalize_input:
         metric = metric / metric.sum(-1, keepdim=True)
 
@@ -113,25 +120,25 @@ def sample_top_p(metric, p, normalize_input=False, indices_only=False, generator
     masked_sorted_metrics_normalize = masked_sorted_metrics / masked_sorted_metrics.sum(-1, keepdim=True)
 
     chosen_sorted_indices = sample_categorical(masked_sorted_metrics_normalize, generator=generator).unsqueeze(-1)
-    chosen_indices = torch.gather(sorted_indices, -1, chosen_sorted_indices)
-    if indices_only:
-        return chosen_indices.squeeze(-1)
-    chosen_values = torch.gather(metric, -1, chosen_indices)
-    return chosen_values.squeeze(-1), chosen_indices.squeeze(-1)
+    chosen_indices = torch.gather(sorted_indices, -1, chosen_sorted_indices).squeeze(-1)
+    if as_mask:
+        return one_hot(chosen_indices, metric.shape[-1])
+    else:
+        return chosen_indices
 
 @torch.no_grad()
-def sample_min_p(metric, p, indices_only=False, generator=None):
+def sample_min_p(metric, p, as_mask=False, generator=None):
     max_metric = torch.max(metric, dim=-1, keepdim=True).values
     metric_threshold = max_metric.expand_as(metric) * p
     metrics_to_ignore = metric < metric_threshold
     masked_metric = metric.clone().masked_fill_(metrics_to_ignore, 0)
     masked_metric_normalized = masked_metric / masked_metric.sum(-1, keepdim=True)
 
-    chosen_indices = sample_categorical(masked_metric_normalized, generator=generator).unsqueeze(-1)
-    if indices_only:
-        return chosen_indices.squeeze(-1)
-    chosen_values = torch.gather(metric, -1, chosen_indices)
-    return chosen_values.squeeze(-1), chosen_indices.squeeze(-1)
+    chosen_indices = sample_categorical(masked_metric_normalized, generator=generator)
+    if as_mask:
+        return one_hot(chosen_indices, metric.shape[-1])
+    else:
+        return chosen_indices
 
 
 def calculate_flops_per_batch(config, model, vocab_size, non_emb_params=None, method="hoffmann"):

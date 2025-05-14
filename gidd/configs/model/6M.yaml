@@ -4,14 +4,3 @@ n_blocks: 8
 n_heads: 8
 dropout: 0.0
 max_seq_len: 83 # 81 + 1 + 1 for sudoku, bos, eos # must be power of 2?
-position_metric: max # [max, margin]
-position_sampling_strategy: all
-position_sampling_strategy_args:
-  top_k: 10
-  top_p: 0.9
-  min_p: 0.05
-token_sampling_strategy: categorical
-token_sampling_startegy_args:
-  top_k: 10
-  top_p: 0.9
-  min_p: 0.05

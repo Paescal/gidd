@@ -1,3 +1,7 @@
+defaults:
+  - sampling: sampling
+  - _self_
+
 checkpoint_path: ???
 batch_size: 16
 num_samples: 16

@@ -14,14 +14,15 @@ class Loss(torch.nn.Module, ABC):
         self.vocab_size = len(tokenizer)
 
     @abstractmethod
-    def loss(self, logits, input_ids, attention_mask, z_t, t):
+    def loss(self, logits, input_ids, diffusion_mask, attention_mask, z_t, t):
         raise NotImplementedError
 
-    def forward(self, logits, input_ids, attention_mask, z_t, t, reduction="tokenmean"):
-        loss, elbo, metrics = self.loss(logits, input_ids, attention_mask, z_t, t)
+    def forward(self, logits, input_ids, diffusion_mask, attention_mask, z_t, t, reduction="tokenmean"):
+        loss, elbo, metrics = self.loss(logits, input_ids, diffusion_mask, attention_mask, z_t, t)
 
         if reduction == "tokenmean":
-            num_tokens = attention_mask.numel()
+            # num_tokens = attention_mask.numel()
+            num_tokens = torch.sum(diffusion_mask, dim=-1)
             loss = loss.sum() / num_tokens
         else:  # reduction == "none"
             pass
@@ -83,7 +84,7 @@ class GiddLoss(Loss):
 
         return alpha_ratio.to(orig_dtype), elbo_weights.to(orig_dtype), loss_weights.to(orig_dtype)
 
-    def loss(self, logits, input_ids, attention_mask, z_t, t):
+    def loss(self, logits, input_ids, diffusion_mask, attention_mask, z_t, t):
         dtype = logits.dtype
         alpha_ratio, elbo_weights, ws = self.get_weights(t, z_t, input_ids)
 
@@ -105,11 +106,15 @@ class GiddLoss(Loss):
 
         loss = ws * (kl_loss + correction)
 
+        loss = loss * diffusion_mask
+        elbo = elbo * diffusion_mask
+        diffusion_attention_and_mask = diffusion_mask * attention_mask
+
         metrics = {
-            "kl_loss": (ws * kl_loss.detach() * attention_mask).sum() / (ws * attention_mask).sum(),
-            "log_ratio": (ws * log_ratio.detach() * attention_mask).sum() / (ws * attention_mask).sum(),
-            "ratio_corr": (ws * correction.detach() * attention_mask).sum() / (ws * attention_mask).sum(),
-            "elbo": (elbo.detach() * attention_mask).sum() / attention_mask.sum(),
+            "kl_loss": (ws * kl_loss.detach() * diffusion_attention_and_mask).sum() / (ws * diffusion_attention_and_mask).sum(),
+            "log_ratio": (ws * log_ratio.detach() * diffusion_attention_and_mask).sum() / (ws * diffusion_attention_and_mask).sum(),
+            "ratio_corr": (ws * correction.detach() * diffusion_attention_and_mask).sum() / (ws * diffusion_attention_and_mask).sum(),
+            "elbo": (elbo.detach() * diffusion_attention_and_mask).sum() / diffusion_attention_and_mask.sum(),
         }
 
         return loss, elbo, metrics
@@ -126,7 +131,7 @@ class MDLMLoss(Loss):
         sigma = -torch.log1p(-(1 - eps) * t.clip(eps, 1))
         return dsigma, sigma
 
-    def loss(self, logits, input_ids, attention_mask, z_t, t):
+    def loss(self, logits, input_ids, diffusion_mask, attention_mask, z_t, t):
         dsigma, sigma_t = self.get_sigmas(t)
 
         logits[..., self.mask_id] = self.neg_infty
@@ -143,9 +148,12 @@ class MDLMLoss(Loss):
 
         elbo = weights * rec_loss
 
+        elbo = elbo * diffusion_mask
+        diffusion_attention_and_mask = diffusion_mask * attention_mask
+
         metrics = {
-            "rec_loss": (weights * rec_loss.detach() * attention_mask).sum() / attention_mask.sum(),
-            "elbo": (elbo.detach() * attention_mask).sum() / attention_mask.sum(),
+            "rec_loss": (weights * rec_loss.detach() * diffusion_attention_and_mask).sum() / diffusion_attention_and_mask.sum(),
+            "elbo": (elbo.detach() * diffusion_attention_and_mask).sum() / diffusion_attention_and_mask.sum(),
         }
 
         return elbo, elbo, metrics

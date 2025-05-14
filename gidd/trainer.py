@@ -33,12 +33,13 @@ class DiffusionTrainer(nn.Module):
 
         with torch.autocast(device_type=self.device.type, dtype=self.dtype):
             t = sample_t(self.config, batch_size, device=self.device)
-            z_t = self.noise_schedule.sample_zt(batch["input_ids"], t)
+            z_t = self.noise_schedule.sample_zt(batch["input_ids"], batch["diffusion_mask"], t)
 
             logits = self.model(z_t, t)
             loss, _, metrics = self.loss_fn.forward(
                 logits=logits,
                 input_ids=batch["input_ids"],
+                diffusion_mask=batch["diffusion_mask"],
                 attention_mask=batch["attention_mask"],
                 z_t=z_t,
                 t=t,
@@ -67,7 +68,7 @@ class AutoregressiveTrainer(nn.Module):
     def forward(self, batch):
         with torch.autocast(device_type=self.device.type, dtype=self.dtype):
             labels = batch["input_ids"][:, 1:]
-            loss_mask = batch["attention_mask"][:, :-1]
+            loss_mask = batch["attention_mask"][:, :-1] * batch["diffusion_mask"][:, :-1]
 
             logits = self.model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"], use_cache=False).logits
             logits = logits[:, :-1]

@@ -35,16 +35,16 @@ class Sampler(nn.Module):
             return z_t
     
     @abstractmethod
-    def _do_generate_from_given(self, initial_z_t, mask, num_denoising_steps, max_length, show_progress, device):
+    def _do_generate_from_given(self, initial_z_t, diffusion_mask, num_denoising_steps, max_length, show_progress, device):
         raise NotImplementedError
     
     # Generate starting from a given z_t, the mask is a tensor with the same shape as z_t of 0s and 1s, where 1 indicates that the token is given and won't be changed
     @torch.no_grad()
-    def generate_from_given(self, z_t, mask=None, num_denoising_steps=1000, max_length=None, decode=True, show_progress=True):
+    def generate_from_given(self, z_t, diffusion_mask, num_denoising_steps=1000, max_length=None, decode=True, show_progress=True):
         max_length = max_length or self.model.config.max_seq_len
         device = next(self.model.parameters()).device
 
-        z_t = self._do_generate_from_given(z_t, mask=mask, num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device)
+        z_t = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device)
 
         if decode:
             texts = self.tokenizer.batch_decode(z_t, skip_special_tokens=True)
@@ -64,7 +64,7 @@ class GiddSampler(Sampler):
             self.position_sampling_strategy = get_position_sampling_strategy(config)
             self.token_sampling_strategy = get_token_sampling_strategy(config)
 
-        def forward(self, z_t, t, s):
+        def forward(self, z_t, t, s, diffusion_mask=None):
             logits = self.model(z_t, t)
             logits[..., self.tokenizer.mask_token_id] = -1e6
 
@@ -89,10 +89,11 @@ class GiddSampler(Sampler):
                 q_st = (1 - is_small) * q_st
                 q_st = q_st / q_st.sum(-1, keepdim=True)
             
-            metric = self.position_metric(q_st)
+            metric = self.position_metric(q_st, diffusion_mask)
+            # Assumption: position sampling strategies will never choose a position with metric = 0
             update_positions = self.position_sampling_strategy(metric)
-            next_z_t, _ = self.token_sampling_strategy(q_st) # TODO: either sample at all positions (no sequential dependency) or sample only at the selected positions (less computation) (by gathering from q_st based on update_positions)
-            return z_t.scatter_(-1, update_positions.unsqueeze(-1), next_z_t.gather(-1, update_positions.unsqueeze(-1)))
+            next_z_t = self.token_sampling_strategy(q_st) # TODO: either sample at all positions (no sequential dependency) or sample only at the selected positions (less computation) (by gathering from q_st based on update_positions)
+            return torch.where(update_positions, next_z_t, z_t)
 
     def __init__(self, config, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
         super().__init__(model, tokenizer, noise_schedule, t_eps=t_eps)
@@ -111,20 +112,15 @@ class GiddSampler(Sampler):
             z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)]).clone()
         return z_t
     
-    def _do_generate_from_given(self, initial_z_t, mask, num_denoising_steps, max_length, show_progress, device):
+    def _do_generate_from_given(self, initial_z_t, diffusion_mask, num_denoising_steps, max_length, show_progress, device):
         ts = torch.linspace(0, 1, num_denoising_steps + 1, device=device).unsqueeze(-1)
         ts = (1 - 2 * self.t_eps) * ts + self.t_eps
-        # TODO: initial t depends on how many tokens are given for each puzzle.
-        # Use different number of steps for different puzzles? Or just set initial t to the same (max) value? Or leave it at num_denoising_steps?
-        # initial_t = int((max_length - torch.min(torch.sum(mask, dim=-1))) * num_denoising_steps / max_length)
-        initial_t = num_denoising_steps
         
         initial_z_t = initial_z_t.to(device, non_blocking=True)
-        mask = mask.to(device, non_blocking=True)
+        diffusion_mask = diffusion_mask.to(device, non_blocking=True)
         z_t = initial_z_t.clone()
-        for i in tqdm.trange(initial_t - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
-            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)]).clone()
-            z_t = mask * initial_z_t + (1 - mask) * z_t
+        for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
+            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=diffusion_mask)
         return z_t
 
 

@@ -119,10 +119,11 @@ class HybridDiffusion(NoiseSchedule):
         probs[..., self.vocab_size:] = 0
         return probs.to(orig_dtype)
     
-    def sample_zt(self, input_ids, t):
+    def sample_zt(self, input_ids, diffusion_mask, t):
         x = F.one_hot(input_ids, num_classes=self.vocab_size).to(dtype=t.dtype)
         probs = self.probs_at_t(x, t)
-        z_t = sample_categorical(probs)
+        z_t = sample_categorical(probs, diffusion_mask)
+        z_t = torch.where(diffusion_mask, z_t, input_ids)
         return z_t
     
 
@@ -153,10 +154,11 @@ class MaskedDiffusion(NoiseSchedule):
         probs[..., self.mask_id] = 1 - alpha_t.unsqueeze(-1)
         return probs
 
-    def sample_zt(self, input_ids, t):
+    def sample_zt(self, input_ids, diffusion_mask, t):
         _, sigma = self.get_sigmas(t)
         move_chance = 1 - torch.exp(-sigma)
         is_masked = torch.rand_like(input_ids.float()) < move_chance.unsqueeze(-1)
+        is_masked = torch.logical_and(is_masked, diffusion_mask)
         z_t = torch.where(is_masked, self.mask_id, input_ids)
         return z_t
 
