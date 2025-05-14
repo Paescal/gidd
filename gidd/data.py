@@ -142,38 +142,47 @@ def subsample_collator(config, tokenizer, examples, text_key="text"):
     bos_token_id = tokenizer.bos_token_id or tokenizer.cls_token_id
     eos_token_id = tokenizer.eos_token_id or tokenizer.sep_token_id
     
-    diffusion_mask = [int(x['diffusion_mask']) for x in examples]
+    diffusion_masks = [x['diffusion_mask'] for x in examples]
     examples = [x[text_key] for x in examples]
     tokens = tokenizer(examples, truncation=False, return_tensors="np")
     max_length = config.model.max_seq_len
     input_ids = []
+    diffusion_masks_padded = []
     attn_masks = []
     for i in range(len(examples)):
         toks = tokens["input_ids"][i]
+        diffusion_mask = [int(c) for c in list(diffusion_masks[i])]
         attn_mask = tokens["attention_mask"][i]
         if toks[0] != bos_token_id:
             toks = np.concatenate([[bos_token_id], toks])
+            diffusion_mask = np.concatenate(([0], diffusion_mask))
             attn_mask = np.concatenate([[1], attn_mask])
         if toks[-1] != eos_token_id:
             toks = np.concatenate([toks, [eos_token_id]])
+            diffusion_mask = np.concatenate([diffusion_mask, [0]])
             attn_mask = np.concatenate([attn_mask, [1]])
 
         if len(toks) > max_length:
             overflow = len(toks) - max_length
             start_idx = np.random.randint(0, overflow + config.data.max_add_padding)
             toks = toks[start_idx : start_idx + max_length]
+            diffusion_mask = diffusion_mask[start_idx : start_idx + max_length]
             attn_mask = attn_mask[start_idx : start_idx + max_length]
         if len(toks) < max_length:
             underflow = max_length - len(toks)
             toks = np.pad(toks, (0, underflow), mode="constant", constant_values=tokenizer.pad_token_id)
+            diffusion_mask = np.pad(diffusion_mask, (0, underflow), mode="constant", constant_values=0)
             attn_mask = np.pad(attn_mask, (0, underflow), mode="constant", constant_values=0)
         assert len(toks) == max_length
+        assert len(diffusion_mask) == max_length
         assert len(attn_mask) == max_length
         input_ids.append(toks)
+        diffusion_masks_padded.append(diffusion_mask)
         attn_masks.append(attn_mask)
     input_ids = torch.from_numpy(np.array(input_ids)).to(torch.long)
+    diffusion_masks_padded = torch.from_numpy(np.array(diffusion_masks_padded)).to(torch.long)
     attn_masks = torch.from_numpy(np.array(attn_masks)).to(torch.long)
-    return BatchEncoding({"input_ids": input_ids, "diffusion_mask": diffusion_mask, "attention_mask": attn_masks}, tensor_type="pt", n_sequences=len(input_ids))
+    return BatchEncoding({"input_ids": input_ids, "diffusion_mask": diffusion_masks_padded, "attention_mask": attn_masks}, tensor_type="pt", n_sequences=len(input_ids))
 
 
 def _get_dataloader(config, ds, shuffle, drop_last, batch_size, collate_fn):

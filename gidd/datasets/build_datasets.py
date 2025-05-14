@@ -5,8 +5,8 @@ def build_sudoku_dataset():
         return dataset.filter(lambda x: x["set"] == set_name)
     
     def add_diffusion_mask(examples):
-        # TODO: add diffusion mask
-        examples['diffusion_mask'] = [ for example in examples['puzzle']]
+        examples['diffusion_mask'] = [''.join('1' if c == '0' else '0' for c in example) for example in examples['puzzle']]
+        return examples
     
     ds = load_dataset("Ritvik19/Sudoku-Dataset", split="train")
     subset = "3m"
@@ -15,6 +15,7 @@ def build_sudoku_dataset():
     ds = ds.train_test_split(test_size=evaluation_size)
     ds_train = ds['train'].select_columns(['puzzle', 'solution'])
     ds_train = ds_train.map(add_diffusion_mask, batched=True)
+    ds_train = ds_train.remove_columns(['puzzle'])
     ds_train = ds_train.rename_column('solution', 'text')
     ds_evaluate = ds['test']
 
