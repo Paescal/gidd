@@ -141,7 +141,8 @@ def pretokenized_collator(examples, pad_token_id=0, tokens_key="input_ids"):
 def subsample_collator(config, tokenizer, examples, text_key="text"):
     bos_token_id = tokenizer.bos_token_id or tokenizer.cls_token_id
     eos_token_id = tokenizer.eos_token_id or tokenizer.sep_token_id
-
+    
+    diffusion_mask = [int(x['diffusion_mask']) for x in examples]
     examples = [x[text_key] for x in examples]
     tokens = tokenizer(examples, truncation=False, return_tensors="np")
     max_length = config.model.max_seq_len
@@ -172,7 +173,7 @@ def subsample_collator(config, tokenizer, examples, text_key="text"):
         attn_masks.append(attn_mask)
     input_ids = torch.from_numpy(np.array(input_ids)).to(torch.long)
     attn_masks = torch.from_numpy(np.array(attn_masks)).to(torch.long)
-    return BatchEncoding({"input_ids": input_ids, "attention_mask": attn_masks}, tensor_type="pt", n_sequences=len(input_ids))
+    return BatchEncoding({"input_ids": input_ids, "diffusion_mask": diffusion_mask, "attention_mask": attn_masks}, tensor_type="pt", n_sequences=len(input_ids))
 
 
 def _get_dataloader(config, ds, shuffle, drop_last, batch_size, collate_fn):
