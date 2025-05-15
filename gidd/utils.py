@@ -36,33 +36,33 @@ def get_lr(config, lr, step):
 
 
 def get_position_metric(config):
-    match config.model.position_metric:
+    match config.sampling.position_metric:
         case "max":
             return position_metric_max
         case "margin":
             return position_metric_margin
 
 def get_position_sampling_strategy(config):
-    match config.model.sampling_strategy:
+    match config.sampling.position_sampling_strategy:
         case "all":
             return all_positions
         case "top_k":
-            return partial(sample_top_k, k=config.model.position_selection_startegy_args.top_k, as_mask=True)
+            return partial(sample_top_k, k=config.sampling.position_sampling_startegy_args.top_k, as_mask=True)
         case "top_p":
-            return partial(sample_top_p, p=config.model.position_selection_strategy_args.top_p, normalize_input=True, as_mask=True)
+            return partial(sample_top_p, p=config.sampling.position_sampling_strategy_args.top_p, normalize_input=True, as_mask=True)
         case "min_p":
-            return partial(sample_min_p, p=config.model.position_selection_strategy_args.min_p, indices_only=True, as_mask=True)
+            return partial(sample_min_p, p=config.sampling.position_sampling_strategy_args.min_p, indices_only=True, as_mask=True)
         
 def get_token_sampling_strategy(config):
-    match config.model.sampling_strategy:
+    match config.sampling.token_sampling_strategy:
         case "categorical":
             return sample_categorical
         case "top_k":
-            return partial(sample_top_k, k=config.model.sampling_startegy_args.top_k)
+            return partial(sample_top_k, k=config.sampling.token_sampling_startegy_args.top_k)
         case "top_p":
-            return partial(sample_top_p, p=config.model.sampling_strategy_args.top_p)
+            return partial(sample_top_p, p=config.sampling.token_sampling_startegy_args.top_p)
         case "min_p":
-            return partial(sample_min_p, p=config.model.sampling_strategy_args.min_p)
+            return partial(sample_min_p, p=config.sampling.token_sampling_startegy_args.min_p)
 
 @torch.no_grad()
 def position_metric_max(probs, diffusion_mask=None):
@@ -74,10 +74,11 @@ def position_metric_max(probs, diffusion_mask=None):
 @torch.no_grad()
 def position_metric_margin(probs, diffusion_mask=None):
     top_2 = torch.topk(probs, 2, dim=-1).values
+    margin = top_2[..., 0] - top_2[..., 1]
     if diffusion_mask is not None:
-        return (top_2[..., 0] - top_2[..., 1]) * diffusion_mask
+        return margin * diffusion_mask
     else:
-        return top_2[..., 0] - top_2[..., 1]
+        return margin
 
 @torch.no_grad()
 def all_positions(metric):

@@ -13,7 +13,7 @@ def row_col_box_set_score(sudoku):
     row_sets = [set(row) for row in sudoku]
     col_sets = [set(col) for col in sudoku.T]
     box_size = int(len(sudoku) ** 0.5)
-    box_sets =[set(sudoku[i*box_size:(i+1)*box_size, j*box_size:(j+1)*box_size]) for i in range(box_size) for j in range(box_size)]
+    box_sets =[set(sudoku[i*box_size:(i+1)*box_size, j*box_size:(j+1)*box_size].flatten()) for i in range(box_size) for j in range(box_size)]
     score = 0
     for curr_set in row_sets + col_sets + box_sets:
         for i in range(len(sudoku)):
@@ -25,34 +25,49 @@ def row_col_box_set_score(sudoku):
 def count_unique_samples(samples):
     unique_samples = set()
     for sample in samples:
-        # Convert the sample to a tuple (or any hashable type) to add it to the set
         unique_samples.add(tuple(sample))
     return len(unique_samples)
 
-def score_samples(samples, solutions_tokenized, tokenizer):
-    cells_score = correct_cells_score(samples, solutions_tokenized)
+def score_samples(samples, diffusion_mask, solutions_tokenized, tokenizer, print_lists=False):
+    num_samples = samples.shape[0]
     seq_len = samples.shape[-1]
-    print(f"Number of correct cells (max is {seq_len}): {cells_score}")
-    print(f"Average number of correct cells: {torch.mean(cells_score.float())}")
-    print(f"number of fully correct samples: {torch.sum(cells_score == (seq_len))}")
+    cells_score = correct_cells_score(samples, solutions_tokenized)
+    free_cells = torch.sum((diffusion_mask == 0).to(int), dim=-1)
+    cells_score_filled = cells_score - free_cells
+    max_cells_score_filled = seq_len - free_cells
+    fraction_filled_correctly = cells_score_filled / max_cells_score_filled
 
     samples_decoded = np.array([tokenizer.decode(samples[i], skip_special_tokens=False, clean_up_tokenization_spaces=False).split() for i in range(len(samples))])
 
     num_unique_samples = count_unique_samples(samples_decoded)
-    print(f"Number of unique samples (of {len(samples_decoded)} total): {num_unique_samples}")
 
     sudoku_size = int(seq_len ** 0.5)
     samples_decoded = samples_decoded.reshape((-1, sudoku_size, sudoku_size))
 
     set_score = [row_col_box_set_score(sample) for sample in samples_decoded]
-    print(f"Set scores (max is {sudoku_size * sudoku_size * 2}): {set_score}")
-    print(f"Average set score: {np.mean(set_score)}")
+    max_set_score = sudoku_size * sudoku_size * 3
+
+    if print_lists:
+        print(f"Number of correct cells (max is {seq_len}): {cells_score}")
+        print(f"Number of provided cells: {free_cells}")
+        print(f"Percentage of missing cells filled correctly: {fraction_filled_correctly}")
+
+    print(f"Percentage of missing cells filled correctly over all samples: {torch.sum(cells_score_filled) / torch.sum(max_cells_score_filled):.2%}")
+    # print(f"Average number of correct cells: {torch.mean(cells_score.float())} / {seq_len} ({torch.mean(cells_score.float()) / seq_len:.2%})")
+    print(f"number of fully correct samples: {torch.sum(cells_score == (seq_len))} / {num_samples} ({torch.sum(cells_score == (seq_len)) / num_samples:.2%})")
+    
+    print(f"Number of unique samples: {num_unique_samples} / {num_samples} ({num_unique_samples / num_samples:.2%})")
+
+    if print_lists:
+        print(f"Set scores (max is {max_set_score}): {set_score}")
+    print(f"Average set score: {np.mean(set_score)} / {max_set_score} ({np.mean(set_score) / max_set_score:.2%})")
 
 # Evaluation for samples starting from puzzles
 import hydra
 import tqdm
 import torch
 import numpy as np
+import os
 
 from functools import partial
 from gidd.utils import parse_dtype
@@ -61,8 +76,8 @@ from gidd.sampling import get_sampler
 
 
 @hydra.main(config_path="../configs", config_name="generate_from_puzzle", version_base="1.1")
-def main(args):
-
+def main(config):
+# args pass batch size, ckpt_path, num_denoising_steps and min_p
     def add_bos_eos(examples, cols):
         for col in cols:
             examples[col] = [tokenizer.bos_token + example + tokenizer.eos_token for example in examples[col]]
@@ -72,18 +87,18 @@ def main(args):
     torch.set_float32_matmul_precision('high')
     torch.set_grad_enabled(False)
 
-    ckpt_path = hydra.utils.to_absolute_path(args.checkpoint_path)
+    ckpt_path = hydra.utils.to_absolute_path(config.checkpoint_path)
 
     model, noise_schedule, tokenizer, ckpt_config = load_checkpoint(ckpt_path, device=device)
     model.eval()
-    ckpt_config.training.eval_batch_size = args.batch_size
+    ckpt_config.training.eval_batch_size = config.batch_size
     dtype = parse_dtype(ckpt_config.training.dtype)
 
     ds_eval = load_from_disk(f"/local/home/prisold/gidd/gidd/datasets/{ckpt_config.data.dataset_name}{('_' + ckpt_config.data.dataset_subset) if ckpt_config.data.dataset_subset else ''}/evaluate")
-    ds_eval = ds_eval.select(range(16))
+    ds_eval = ds_eval.select(range(1024))
     num_samples = ds_eval.num_rows
     
-    print(f"Evaluating model from {args.checkpoint_path} on {num_samples} samples")
+    print(f"Evaluating model from {ckpt_path} on {num_samples} samples")
     
     # ds_eval = ds_eval.map(partial(add_bos_eos, cols=['puzzle', 'solution']), batched=True)
     ds_eval = ds_eval.map(partial(add_bos_eos, cols=['puzzle']), batched=True)
@@ -94,27 +109,27 @@ def main(args):
     solutions_tokenized = torch.tensor(tokenizer(solutions['solution'])['input_ids'])
     diffusion_mask = (puzzles_tokenized == tokenizer.mask_token_id).to(int)
     # TODO: set compile_step based on something
-    # TODO: pass model and sampling configs
-    sampler = get_sampler(ckpt_config, model, tokenizer, noise_schedule, compile_step=False, min_p=args.min_p)
+    sampler = get_sampler(ckpt_config, config, model, tokenizer, noise_schedule, compile_step=False, min_p=config.min_p)
     model.eval()
 
     samples = []
     with tqdm.tqdm(total=num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
         with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
-            for i in range(0, num_samples, args.batch_size):
-                bs = min(args.batch_size, num_samples - i)
+            for i in range(0, num_samples, config.batch_size):
+                bs = min(config.batch_size, num_samples - i)
                 # TODO: how is the max_length in SamplerInstance.model.config.max_seq_len set? Once that is done automatically for sudoku, no need to pass it here
                 # TODO: add parameter to return the generation history
-                z_t = sampler.generate_from_given(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], args.num_denoising_steps, max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False)
+                z_t = sampler.generate_from_given(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False)
                 samples.append(z_t)
                 pbar.update(bs)
     samples = torch.cat(samples, dim=0)
     post_correction_samples = samples.clone()
 
     samples = samples.cpu()[:, 1:-1]
-    torch.save(samples, hydra.utils.to_absolute_path(ckpt_path + "../../samples/" + "evaluation_samples_pre_correction.pt"))
+    pre_correction_samples_path = os.path.join(ckpt_path, "../../samples/", "evaluation_samples_pre_correction.pt")
+    torch.save(samples, hydra.utils.to_absolute_path(pre_correction_samples_path))
 
-    score_samples(samples, solutions_tokenized, tokenizer)
+    score_samples(samples, diffusion_mask, solutions_tokenized, tokenizer)
 
     # with tqdm.tqdm(total=num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
     #     with torch.no_grad(), torch.autocast(device.type, dtype=dtype):

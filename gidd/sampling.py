@@ -38,7 +38,7 @@ class Sampler(nn.Module):
     def _do_generate_from_given(self, initial_z_t, diffusion_mask, num_denoising_steps, max_length, show_progress, device):
         raise NotImplementedError
     
-    # Generate starting from a given z_t, the mask is a tensor with the same shape as z_t of 0s and 1s, where 1 indicates that the token is given and won't be changed
+    # Generate starting from a given z_t, the diffusion_mask is a tensor with the same shape as z_t of 0s and 1s, where 1 indicates that the token is NOT given and needs to be denoised
     @torch.no_grad()
     def generate_from_given(self, z_t, diffusion_mask, num_denoising_steps=1000, max_length=None, decode=True, show_progress=True):
         max_length = max_length or self.model.config.max_seq_len
@@ -212,15 +212,15 @@ class AutoregressiveSampler(Sampler):
         return input_ids
 
 
-def get_sampler(config, model, tokenizer, noise_schedule: NoiseSchedule, compile_step=True, min_p=0.0):
-    if config.model.type == "diffusion":
-        if config.model.diffusion_process == "gidd":
-            return GiddSampler(config, model, tokenizer, noise_schedule, t_eps=config.model.t_eps, compile_step=compile_step, min_p=min_p)
-        elif config.model.diffusion_process == "mdlm":
-            return MDLMSampler(model, tokenizer, noise_schedule, t_eps=config.model.t_eps, compile_step=compile_step, min_p=min_p)
+def get_sampler(ckpt_config, sampling_config, model, tokenizer, noise_schedule: NoiseSchedule, compile_step=True, min_p=0.0):
+    if ckpt_config.model.type == "diffusion":
+        if ckpt_config.model.diffusion_process == "gidd":
+            return GiddSampler(sampling_config, model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
+        elif ckpt_config.model.diffusion_process == "mdlm":
+            return MDLMSampler(model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
         else:
-            raise ValueError(f"Unsupported forward process: {config.model.diffusion_process}")
-    elif config.model.type == "autoregressive":
+            raise ValueError(f"Unsupported forward process: {ckpt_config.model.diffusion_process}")
+    elif ckpt_config.model.type == "autoregressive":
         return AutoregressiveSampler(model, tokenizer, noise_schedule, compile_step=True)
     else:
-        raise ValueError(f"Unsupported model type: {config.model.type}")
+        raise ValueError(f"Unsupported model type: {ckpt_config.model.type}")
