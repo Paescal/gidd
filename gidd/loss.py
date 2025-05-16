@@ -92,6 +92,8 @@ class GiddLoss(Loss):
 
         x = F.one_hot(input_ids, logits.shape[-1]).to(dtype)
         x_hat = logits.softmax(-1).to(dtype)  # prevent automatic upcasting
+        x_hat = torch.where(diffusion_mask.unsqueeze(-1).bool(), x_hat, x)
+
         log_q_t = self.noise_schedule.probs_at_t(x, t).log_().clip_(min=-1e6)
         log_p_t = self.noise_schedule.probs_at_t(x_hat, t).log_().clip_(min=-1e6)
 
@@ -106,10 +108,7 @@ class GiddLoss(Loss):
 
         loss = ws * (kl_loss + correction)
 
-        loss = loss * diffusion_mask
-        elbo = elbo * diffusion_mask
         diffusion_attention_and_mask = diffusion_mask * attention_mask
-
         metrics = {
             "kl_loss": (ws * kl_loss.detach() * diffusion_attention_and_mask).sum() / (ws * diffusion_attention_and_mask).sum(),
             "log_ratio": (ws * log_ratio.detach() * diffusion_attention_and_mask).sum() / (ws * diffusion_attention_and_mask).sum(),
