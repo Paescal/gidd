@@ -40,11 +40,14 @@ class Sampler(nn.Module):
     
     # Generate starting from a given z_t, the diffusion_mask is a tensor with the same shape as z_t of 0s and 1s, where 1 indicates that the token is NOT given and needs to be denoised
     @torch.no_grad()
-    def generate_from_given(self, z_t, diffusion_mask, num_denoising_steps=1000, max_length=None, decode=True, show_progress=True, keep_history=False):
+    def generate_from_given(self, z_t, diffusion_mask, num_denoising_steps=128, max_length=None, decode=True, show_progress=True, keep_history=False):
         max_length = max_length or self.model.config.max_seq_len
+        # print("getting device")
         device = next(self.model.parameters()).device
 
+        # print("calling _do_generate_from_given")
         z_t, history = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device, keep_history=keep_history)
+        # print("done calling _do_generate_from_given")
 
         if decode:
             texts = self.tokenizer.batch_decode(z_t, skip_special_tokens=True)
@@ -68,14 +71,18 @@ class GiddSampler(Sampler):
             self.token_sampling_strategy = get_token_sampling_strategy(config)
 
         def forward(self, z_t, t, s, diffusion_mask=None):
+            # print("inside gidd denoising step")
             logits = self.model(z_t, t)
+            # print("got logits from model")
             logits[..., self.tokenizer.mask_token_id] = -1e6
 
             # if i > 0:
+            # print("getting probs at t and s")
             q_s = self.noise_schedule.probs_at_t(logits.softmax(-1), s)
             q_t = self.noise_schedule.probs_at_t(logits.softmax(-1), t)
             q_zt = q_t.gather(-1, z_t.unsqueeze(-1))
 
+            # print("getting alpha and beta pi at t and s")
             alpha_t, beta_pi_t = self.noise_schedule.get_alpha_betapi(t)
             alpha_s, beta_pi_s = self.noise_schedule.get_alpha_betapi(s)
 
@@ -92,9 +99,12 @@ class GiddSampler(Sampler):
                 q_st = (1 - is_small) * q_st
                 q_st = q_st / q_st.sum(-1, keepdim=True)
             
+            # print("getting metric")
             metric = self.position_metric(z_t, q_st, diffusion_mask)
             # Assumption: position sampling strategies will never choose a position with metric = 0
+            # print("getting update positions")
             update_positions = self.position_sampling_strategy(metric)
+            # print("getting next z_t")
             next_z_t = self.token_sampling_strategy(q_st) # TODO: either sample at all positions (no sequential dependency) or sample only at the selected positions (less computation) (by gathering from q_st based on update_positions)
             return torch.where(update_positions, next_z_t, z_t)
 
@@ -123,8 +133,11 @@ class GiddSampler(Sampler):
         diffusion_mask = diffusion_mask.to(device, non_blocking=True)
         z_t = initial_z_t.clone()
         history = [initial_z_t.clone()]
+        print("entering sampling loop in _do_generate_from_given")
         for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
+            print(f"sampling step {i}")
             z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=diffusion_mask)
+            print(f"sampling step {i} done")
             if keep_history:
                 history.append(z_t.clone())
         if keep_history:

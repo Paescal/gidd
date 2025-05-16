@@ -314,6 +314,9 @@ def main(config):
             ### Score Sudoku ###
 
             if ((step + 1) % config.logging.score_freq) == 0:
+                # print("Scoring Sudoku...")
+                dist.barrier()
+                # print("Passed first barrier")
                 with torch.no_grad():
                     with torch.amp.autocast('cuda', dtype=torch.bfloat16):
                         score_start_time = time.time()
@@ -321,7 +324,9 @@ def main(config):
 
                         score_metrics = {}
                         num_score_samples = 0
+                        # print(f"len score_dl: {len(score_dl)}")
                         for i, score_batch in enumerate(tqdm.tqdm(score_dl, desc="Score", dynamic_ncols=True, total=config.logging.num_score_batches, disable=not is_main_process)):
+                            # print("entered score_dl loop")
                             bs = score_batch["input_ids"].size(0)
 
                             score_batch = {k: v.to(device, non_blocking=True) for k, v in score_batch.items()}
@@ -329,18 +334,24 @@ def main(config):
                             puzzles_tokenized = score_batch["puzzle_ids"]
                             diffusion_mask = score_batch["diffusion_mask"]
                             solutions_tokenized = score_batch["input_ids"]
+                            # print("generating samples")
                             samples = sampler.generate_from_given(puzzles_tokenized, diffusion_mask, config.sampling.num_denoising_steps, max_length=config.model.max_seq_len, decode=False, show_progress=False, keep_history=False)
+                            # print("scoring samples")
                             sudoku_metrics = score_sudoku(samples[:, 1:-1], diffusion_mask[:, 1:-1], solutions_tokenized[:, 1:-1], tokenizer)
-                            
+                            # print("scoring done")
                             for k, v in sudoku_metrics.items():
                                 score_metrics[k] = score_metrics.get(k, 0) + (v.item() if isinstance(v, torch.Tensor) else v) * bs
 
                             num_score_samples += bs
 
+                            del samples, sudoku_metrics, score_batch
+
                             if i >= config.logging.num_score_batches - 1:
                                 break
 
+                        # print("Reached second barrier")
                         dist.barrier()
+                        # print("Passed second barrier")
 
                         score_elapsed_time = time.time() - score_start_time
                         logger.log({
