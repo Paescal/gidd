@@ -32,7 +32,9 @@ from gidd.utils import (
     get_lr,
     parse_dtype,
     calculate_flops_per_batch,
+    score_sudoku,
 )
+from gidd.sampling import get_sampler
 
 
 class Logger:
@@ -110,6 +112,8 @@ def main(config):
         trainer = trainer.to(device)
 
         optimizer = get_optimizer(config, trainer)
+        
+        sampler = get_sampler(config, model, tokenizer, noise_schedule, compile_step=config.training.compile_model)
 
         state = TrainingState(
             epoch=0,
@@ -128,7 +132,7 @@ def main(config):
         ) = load_checkpoint_for_training(config.training.resume, device=device, dtype=dtype)
 
     with main_process_first():
-        train_dl, test_dl = get_dataloaders(config, tokenizer)
+        train_dl, test_dl, score_dl = get_dataloaders(config, tokenizer)
 
     max_lr = config.optimizer.lr
 
@@ -184,6 +188,7 @@ def main(config):
     # initialize eval dataloader to prevent new processes getting started during training
     # (without this crashes can occur if the code changes before the first eval step)
     _ = next(iter(test_dl))
+    _ = next(iter(score_dl))
 
     # for resuming training, skip the batches that were already trained on
     if state.step - state.epoch_start_step > 0:
@@ -303,6 +308,40 @@ def main(config):
                         "eval/loss": eval_loss / num_eval_samples,
                         "eval/time_taken": eval_elapsed_time,
                         **{f"eval/{k}": v / num_eval_samples for k, v in eval_metrics.items()},
+                    }, step=step)
+                    model.train()
+            
+            ### Score Sudoku ###
+
+            if ((step + 1) % config.logging.score_freq) == 0:
+                with torch.no_grad():
+                    score_start_time = time.time()
+                    model.eval()
+
+                    score_metrics = {}
+                    num_score_samples = 0
+                    for i, score_batch in enumerate(tqdm.tqdm(score_dl, desc="Score", dynamic_ncols=True, total=config.logging.num_score_batches, disable=not is_main_process)):
+                        bs = score_batch["input_ids"].size(0)
+
+                        score_batch = {k: v.to(device, non_blocking=True) for k, v in score_batch.items()}
+                        # TODO: this assumes the dataset is sudoku
+                        # sudoku_metrics = score_sudoku(score_batch, tokenizer, sampler)
+                        sudoku_metrics = None
+                        
+                        for k, v in sudoku_metrics.items():
+                            score_metrics[k] = score_metrics.get(k, 0) + (v.item() if isinstance(v, torch.Tensor) else v) * bs
+
+                        num_score_samples += bs
+
+                        if i >= config.logging.num_score_batches - 1:
+                            break
+
+                    dist.barrier()
+
+                    score_elapsed_time = time.time() - score_start_time
+                    logger.log({
+                        "score/time_taken": score_elapsed_time,
+                        **{f"score/{k}": v / num_score_samples for k, v in score_metrics.items()},
                     }, step=step)
                     model.train()
 

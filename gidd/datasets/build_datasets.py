@@ -15,7 +15,6 @@ def build_sudoku_dataset():
     ds = ds.train_test_split(test_size=evaluation_size)
     ds_train = ds['train'].select_columns(['puzzle', 'solution'])
     ds_train = ds_train.map(add_diffusion_mask, batched=True)
-    ds_train = ds_train.remove_columns(['puzzle'])
     ds_train = ds_train.rename_column('solution', 'text')
     ds_evaluate = ds['test']
 

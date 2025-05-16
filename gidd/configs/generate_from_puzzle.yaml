@@ -2,8 +2,9 @@ defaults:
   - sampling: sampling
   - _self_
 
-# checkpoint_path: ./outputs/2025-05-14/23-17-50/checkpoints/latest/
-checkpoint_path: ./outputs/2025-05-14/23-14-12/checkpoints/latest/
+checkpoint_path: ./outputs/2025-05-14/23-17-50/checkpoints/latest/ # p_u = 0.0
+# checkpoint_path: ./outputs/2025-05-14/23-14-12/checkpoints/latest/ # p_u = 0.1
+# checkpoint_path: ./outputs/2025-05-15/11-54-08/checkpoints/latest/ # p_u = 0.2
 batch_size: 64
 num_denoising_steps: 128
 min_p: 0.0

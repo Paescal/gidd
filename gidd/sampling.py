@@ -44,13 +44,13 @@ class Sampler(nn.Module):
         max_length = max_length or self.model.config.max_seq_len
         device = next(self.model.parameters()).device
 
-        z_t = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device)
+        z_t, history = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device)
 
         if decode:
             texts = self.tokenizer.batch_decode(z_t, skip_special_tokens=True)
             return texts
         else:
-            return z_t
+            return z_t, history
 
 class GiddSampler(Sampler):
     class DenoisingStep(nn.Module):
@@ -89,7 +89,7 @@ class GiddSampler(Sampler):
                 q_st = (1 - is_small) * q_st
                 q_st = q_st / q_st.sum(-1, keepdim=True)
             
-            metric = self.position_metric(q_st, diffusion_mask)
+            metric = self.position_metric(z_t, q_st, diffusion_mask)
             # Assumption: position sampling strategies will never choose a position with metric = 0
             update_positions = self.position_sampling_strategy(metric)
             next_z_t = self.token_sampling_strategy(q_st) # TODO: either sample at all positions (no sequential dependency) or sample only at the selected positions (less computation) (by gathering from q_st based on update_positions)
@@ -119,9 +119,11 @@ class GiddSampler(Sampler):
         initial_z_t = initial_z_t.to(device, non_blocking=True)
         diffusion_mask = diffusion_mask.to(device, non_blocking=True)
         z_t = initial_z_t.clone()
+        history = [initial_z_t.clone()]
         for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
             z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=diffusion_mask)
-        return z_t
+            history.append(z_t.clone())
+        return z_t, torch.stack(history, dim=0).permute(1, 0, 2) # (bs, num_denoising_steps + 1, max_length)
 
 
 class MDLMSampler(Sampler):
@@ -212,7 +214,9 @@ class AutoregressiveSampler(Sampler):
         return input_ids
 
 
-def get_sampler(ckpt_config, sampling_config, model, tokenizer, noise_schedule: NoiseSchedule, compile_step=True, min_p=0.0):
+def get_sampler(ckpt_config, model, tokenizer, noise_schedule: NoiseSchedule, sampling_config=None, compile_step=True, min_p=0.0):
+    if sampling_config is None:
+        sampling_config = ckpt_config
     if ckpt_config.model.type == "diffusion":
         if ckpt_config.model.diffusion_process == "gidd":
             return GiddSampler(sampling_config, model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)

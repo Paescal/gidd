@@ -5,12 +5,13 @@ defaults:
   - data: sudoku
   - model: 6M
   - optimizer: adam
+  - sampling: training_sampling
   - _self_
 
 model:
   type: diffusion
   diffusion_process: gidd
-  p_uniform: 0.0
+  p_uniform: 0.2
   t_eps: 1e-4
 
 training:
@@ -18,7 +19,9 @@ training:
   seed: 1
   train_batch_size: 64
   eval_batch_size: 64
-  num_train_steps: 118_128 # 1 epoch = 1_889_993 / 64 = 29_532
+  score_batch_size: 64
+  # num_train_steps: 1 epoch = 1_889_993 / 64 = 29_532
+  num_train_steps: 118_128
   lr_schedule: cosine
   warmup_steps: 10_000 #10000
   low_discrepancy_sampling: True

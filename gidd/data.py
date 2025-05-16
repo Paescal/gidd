@@ -24,6 +24,7 @@ def get_dataset(config, num_proc=32):
         ds = ds.train_test_split(test_size=test_size)
         train_ds = ds['train']
         test_ds = ds['test']
+        score_ds = test_ds
         
         # expects sudoku.yaml to contain e.g. dataset_name: gidd/datasets/sudoku/train/, dataset_subset: 3m
         # train_ds = load_dataset(
@@ -56,7 +57,7 @@ def get_dataset(config, num_proc=32):
             num_proc=n_proc,
         )
 
-    return train_ds, test_ds
+    return train_ds, test_ds, score_ds
 
 
 def cached_dataset(cache_dir: str, file_name: str, generate_fn: Callable[[], Dataset]) -> Dataset:
@@ -143,22 +144,28 @@ def subsample_collator(config, tokenizer, examples, text_key="text"):
     eos_token_id = tokenizer.eos_token_id or tokenizer.sep_token_id
     
     diffusion_masks = [x['diffusion_mask'] for x in examples]
+    puzzles = [x['puzzle'] for x in examples]
     examples = [x[text_key] for x in examples]
     tokens = tokenizer(examples, truncation=False, return_tensors="np")
+    puzzle_tokens = tokenizer(puzzles, truncation=False, return_tensors="np")
     max_length = config.model.max_seq_len
     input_ids = []
+    puzzle_ids = []
     diffusion_masks_padded = []
     attn_masks = []
     for i in range(len(examples)):
         toks = tokens["input_ids"][i]
+        puzzle_toks = puzzle_tokens["input_ids"][i]
         diffusion_mask = [int(c) for c in list(diffusion_masks[i])]
         attn_mask = tokens["attention_mask"][i]
         if toks[0] != bos_token_id:
             toks = np.concatenate([[bos_token_id], toks])
+            puzzle_toks = np.concatenate([[bos_token_id], puzzle_toks])
             diffusion_mask = np.concatenate(([0], diffusion_mask))
             attn_mask = np.concatenate([[1], attn_mask])
         if toks[-1] != eos_token_id:
             toks = np.concatenate([toks, [eos_token_id]])
+            puzzle_toks = np.concatenate([puzzle_toks, [eos_token_id]])
             diffusion_mask = np.concatenate([diffusion_mask, [0]])
             attn_mask = np.concatenate([attn_mask, [1]])
 
@@ -166,23 +173,28 @@ def subsample_collator(config, tokenizer, examples, text_key="text"):
             overflow = len(toks) - max_length
             start_idx = np.random.randint(0, overflow + config.data.max_add_padding)
             toks = toks[start_idx : start_idx + max_length]
+            puzzle_toks = puzzle_toks[start_idx : start_idx + max_length]
             diffusion_mask = diffusion_mask[start_idx : start_idx + max_length]
             attn_mask = attn_mask[start_idx : start_idx + max_length]
         if len(toks) < max_length:
             underflow = max_length - len(toks)
             toks = np.pad(toks, (0, underflow), mode="constant", constant_values=tokenizer.pad_token_id)
+            puzzle_toks = np.pad(puzzle_toks, (0, underflow), mode="constant", constant_values=tokenizer.pad_token_id)
             diffusion_mask = np.pad(diffusion_mask, (0, underflow), mode="constant", constant_values=0)
             attn_mask = np.pad(attn_mask, (0, underflow), mode="constant", constant_values=0)
         assert len(toks) == max_length
+        assert len(puzzle_toks) == max_length
         assert len(diffusion_mask) == max_length
         assert len(attn_mask) == max_length
         input_ids.append(toks)
+        puzzle_ids.append(puzzle_toks)
         diffusion_masks_padded.append(diffusion_mask)
         attn_masks.append(attn_mask)
     input_ids = torch.from_numpy(np.array(input_ids)).to(torch.long)
+    puzzle_ids = torch.from_numpy(np.array(puzzle_ids)).to(torch.long)
     diffusion_masks_padded = torch.from_numpy(np.array(diffusion_masks_padded)).to(torch.long)
     attn_masks = torch.from_numpy(np.array(attn_masks)).to(torch.int)
-    return BatchEncoding({"input_ids": input_ids, "diffusion_mask": diffusion_masks_padded, "attention_mask": attn_masks}, tensor_type="pt", n_sequences=len(input_ids))
+    return BatchEncoding({"input_ids": input_ids, "puzzle_ids": puzzle_ids, "diffusion_mask": diffusion_masks_padded, "attention_mask": attn_masks}, tensor_type="pt", n_sequences=len(input_ids))
 
 
 def _get_dataloader(config, ds, shuffle, drop_last, batch_size, collate_fn):
@@ -206,13 +218,15 @@ def _get_dataloader(config, ds, shuffle, drop_last, batch_size, collate_fn):
     )
 
 
-def get_dataloaders(config, tokenizer, train_batch_size=None, eval_batch_size=None):
+def get_dataloaders(config, tokenizer, train_batch_size=None, eval_batch_size=None, score_batch_size=None):
     if train_batch_size is None:
         train_batch_size = config.training.train_batch_size
     if eval_batch_size is None:
         eval_batch_size = config.training.eval_batch_size
+    if score_batch_size is None:
+        score_batch_size = config.training.score_batch_size
 
-    train_ds, test_ds = get_dataset(config)
+    train_ds, test_ds, score_ds = get_dataset(config)
 
     if config.data.pre_tokenize:
         max_seq_len = config.model.max_seq_len
@@ -239,6 +253,11 @@ def get_dataloaders(config, tokenizer, train_batch_size=None, eval_batch_size=No
             file_name=f"cache-{config.data.dataset_name.replace('/', '--')}-test-{cache_key}",
             generate_fn=functools.partial(tokenize_dataset, ds=test_ds, tokenizer=tokenizer, max_seq_len=max_seq_len, sequence_packing=sequence_packing),
         )
+        score_ds = cached_dataset(
+            cache_dir=hydra.utils.to_absolute_path(config.data.cache_dir),
+            file_name=f"cache-{config.data.dataset_name.replace('/', '--')}-score-{cache_key}",
+            generate_fn=functools.partial(tokenize_dataset, ds=score_ds, tokenizer=tokenizer, max_seq_len=max_seq_len, sequence_packing=sequence_packing),
+        )
 
         collate_fn = functools.partial(pretokenized_collator, pad_token_id=tokenizer.pad_token_id, tokens_key="input_ids")
     else:
@@ -249,5 +268,6 @@ def get_dataloaders(config, tokenizer, train_batch_size=None, eval_batch_size=No
 
     train_dl = _get_dataloader(config, train_ds, shuffle=True, drop_last=True, batch_size=train_batch_size, collate_fn=collate_fn)
     test_dl = _get_dataloader(config, test_ds, shuffle=False, drop_last=False, batch_size=eval_batch_size, collate_fn=collate_fn)
+    score_dl = _get_dataloader(config, score_ds, shuffle=False, drop_last=False, batch_size=score_batch_size, collate_fn=collate_fn)
 
-    return train_dl, test_dl
+    return train_dl, test_dl, score_dl
