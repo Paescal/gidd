@@ -62,6 +62,42 @@ def score_samples(samples, diffusion_mask, solutions_tokenized, tokenizer, print
         print(f"Set scores (max is {max_set_score}): {set_score}")
     print(f"Average set score: {np.mean(set_score)} / {max_set_score} ({np.mean(set_score) / max_set_score:.2%})")
 
+def show_history(histories, diffusion_mask):
+    # histories.shape = (num_samples, num_denoising_steps, seq_len)
+    # diffusion_mask.shape = (num_samples, seq_len)
+
+    sample_history = histories[0]       # shape: (num_steps, seq_len)
+    changing_mask = diffusion_mask[0]   # shape: (seq_len,)
+    
+    num_steps, seq_len = sample_history.shape
+    changing_indices = [i for i in range(seq_len) if changing_mask[i] == 1]
+    # changing_indices = changing_indices[:30]
+
+    print("History for changing tokens only:")
+    print("-" * (10 + len(changing_indices) * 6))
+
+    # Header
+    header = f"{'Step':<6} | " + " ".join(f"{i:>4}" for i in changing_indices)
+    print(header)
+    print("-" * len(header))
+
+    # Rows
+    for step in range(num_steps):
+        current_tokens = sample_history[step]
+        if step == 0:
+            line = f"{step:<6} | " + " ".join(f"{current_tokens[i]:>4}" for i in changing_indices)
+        else:
+            prev_tokens = sample_history[step - 1]
+            line = f"{step:<6} | " + " ".join(
+                f"{current_tokens[i]:>4}" if current_tokens[i] != prev_tokens[i] else "  . "
+                for i in changing_indices
+            )
+        print(line)
+
+    print("-" * len(header))
+    print("Note: '.' indicates the token remained unchanged from the previous step.")
+
+
 # Evaluation for samples starting from puzzles
 import hydra
 import tqdm
@@ -95,7 +131,7 @@ def main(config):
     dtype = parse_dtype(ckpt_config.training.dtype)
 
     ds_eval = load_from_disk(f"/local/home/prisold/gidd/gidd/datasets/{ckpt_config.data.dataset_name}{('_' + ckpt_config.data.dataset_subset) if ckpt_config.data.dataset_subset else ''}/evaluate")
-    ds_eval = ds_eval.select(range(1024))
+    ds_eval = ds_eval.select(range(16))
     num_samples = ds_eval.num_rows
     
     print(f"Evaluating model from {ckpt_path} on {num_samples} samples")
@@ -109,20 +145,25 @@ def main(config):
     solutions_tokenized = torch.tensor(tokenizer(solutions['solution'])['input_ids'])
     diffusion_mask = (puzzles_tokenized == tokenizer.mask_token_id).to(int)
     # TODO: set compile_step based on something
-    sampler = get_sampler(ckpt_config, config, model, tokenizer, noise_schedule, compile_step=False, min_p=config.min_p)
+    sampler = get_sampler(ckpt_config, model, tokenizer, noise_schedule, sampling_config=config, compile_step=False, min_p=config.min_p)
     model.eval()
 
     samples = []
+    histories = []
     with tqdm.tqdm(total=num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
         with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
             for i in range(0, num_samples, config.batch_size):
                 bs = min(config.batch_size, num_samples - i)
                 # TODO: how is the max_length in SamplerInstance.model.config.max_seq_len set? Once that is done automatically for sudoku, no need to pass it here
                 # TODO: add parameter to return the generation history
-                z_t = sampler.generate_from_given(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False)
+                z_t, history = sampler.generate_from_given(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False)
                 samples.append(z_t)
+                histories.append(history)
                 pbar.update(bs)
     samples = torch.cat(samples, dim=0)
+    histories = torch.cat(histories, dim=0).cpu()
+    print(histories.shape)
+    print(diffusion_mask.shape)
     post_correction_samples = samples.clone()
 
     samples = samples.cpu()[:, 1:-1]
@@ -130,6 +171,10 @@ def main(config):
     torch.save(samples, hydra.utils.to_absolute_path(pre_correction_samples_path))
 
     score_samples(samples, diffusion_mask, solutions_tokenized, tokenizer)
+    # print(histories[0, :, :5])
+    # print(puzzles_tokenized[0])
+    show_history(histories, diffusion_mask)
+    print(histories[0, :, 8])
 
     # with tqdm.tqdm(total=num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
     #     with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
