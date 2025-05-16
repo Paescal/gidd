@@ -47,7 +47,7 @@ def get_position_sampling_strategy(config):
         case "all":
             return all_positions
         case "top_k":
-            return partial(sample_top_k, k=config.sampling.position_sampling_startegy_args.top_k, as_mask=True)
+            return partial(sample_top_k, k=config.sampling.position_sampling_strategy_args.top_k, as_mask=True)
         case "top_p":
             return partial(sample_top_p, p=config.sampling.position_sampling_strategy_args.top_p, normalize_input=True, as_mask=True)
         case "min_p":
@@ -58,27 +58,51 @@ def get_token_sampling_strategy(config):
         case "categorical":
             return sample_categorical
         case "top_k":
-            return partial(sample_top_k, k=config.sampling.token_sampling_startegy_args.top_k)
+            return partial(sample_top_k, k=config.sampling.token_sampling_strategy_args.top_k)
         case "top_p":
-            return partial(sample_top_p, p=config.sampling.token_sampling_startegy_args.top_p)
+            return partial(sample_top_p, p=config.sampling.token_sampling_strategy_args.top_p)
         case "min_p":
-            return partial(sample_min_p, p=config.sampling.token_sampling_startegy_args.min_p)
+            return partial(sample_min_p, p=config.sampling.token_sampling_strategy_args.min_p)
 
 @torch.no_grad()
-def position_metric_max(probs, diffusion_mask=None):
+def position_metric_max(z_t, probs, diffusion_mask=None):
+    metric = torch.max(probs, dim=-1).values
     if diffusion_mask is not None:
-        return torch.max(probs, dim=-1).values * diffusion_mask
+        return metric * diffusion_mask
     else:
-        return torch.max(probs, dim=-1).values
+        return metric
+    
+    # Don't allow changing the token if the model thinks the current one is the best (this is flawed as is, because the mask token is always the best until almost the end)
+    # max_indices = torch.max(probs, dim=-1).indices
+    # z_t_is_max = (z_t == max_indices)
+
+    # metric = torch.max(probs, dim=-1).values
+    # metric = torch.where(z_t_is_max, 0, metric)
+    # if diffusion_mask is not None:
+    #     return metric * diffusion_mask
+    # else:
+    #     return metric
 
 @torch.no_grad()
-def position_metric_margin(probs, diffusion_mask=None):
+def position_metric_margin(z_t, probs, diffusion_mask=None):
     top_2 = torch.topk(probs, 2, dim=-1).values
-    margin = top_2[..., 0] - top_2[..., 1]
+    metric = top_2[..., 0] - top_2[..., 1]
     if diffusion_mask is not None:
-        return margin * diffusion_mask
+        return metric * diffusion_mask
     else:
-        return margin
+        return metric
+    
+    # Don't allow changing the token if the model thinks the current one is the best (this is flawed as is, because the mask token is always the best until almost the end)
+    # max_indices = torch.max(probs, dim=-1).indices
+    # z_t_is_max = (z_t == max_indices)
+
+    # top_2 = torch.topk(probs, 2, dim=-1).values
+    # metric = top_2[..., 0] - top_2[..., 1]
+    # metric = torch.where(z_t_is_max, 0, metric)
+    # if diffusion_mask is not None:
+    #     return metric * diffusion_mask
+    # else:
+    #     return metric
 
 @torch.no_grad()
 def all_positions(metric):
@@ -95,16 +119,36 @@ def sample_categorical(probs, generator=None):
     return samples
 
 @torch.no_grad()
-def sample_top_k(metric, k, as_mask=False, generator=None):
-    candidates_metrics, candidates_indices = torch.topk(metric, k, dim=-1)
-    candidates_probs = candidates_metrics / candidates_metrics.sum(-1, keepdim=True)
-
-    chosen_candidates = sample_categorical(candidates_probs, generator=generator).unsqueeze(-1)
-    chosen_indices = torch.gather(candidates_indices, -1, chosen_candidates).squeeze(-1)
+# TODO: all_candidates=bool is only a temporary variable for testing selecting all candidates
+def sample_top_k(metric, k, as_mask=False, all_candidates=False, generator=None):
+    top_k_thresholds = torch.topk(metric, k + 1, dim=-1).values[..., -1].unsqueeze(-1)
+    top_k_mask = metric > top_k_thresholds
+    if all_candidates:
+        if as_mask:
+            return top_k_mask
+    
+    metric_masked = metric.masked_fill(~top_k_mask, 0)
+    metric_masked_normalized = metric_masked / metric_masked.sum(-1, keepdim=True) # TODO: this assumes that metric is not all zeros
+    chosen_indices = sample_categorical(metric_masked_normalized, generator=generator).unsqueeze(-1)
     if as_mask:
-        return one_hot(chosen_indices, metric.shape[-1])
+        return one_hot(chosen_indices.squeeze(-1), metric.shape[-1]).to(bool)
     else:
         return chosen_indices
+
+    # candidates_metrics, candidates_indices = torch.topk(metric, k, dim=-1)
+    # if all_candidates:
+    #     if as_mask:
+    #         candidates_mask = torch.zeros_like(metric, dtype=torch.bool, device=metric.device)
+    #         candidates_mask.scatter_(-1, candidates_indices, True)
+    #         return candidates_mask
+    # candidates_probs = candidates_metrics / candidates_metrics.sum(-1, keepdim=True)
+
+    # chosen_candidates = sample_categorical(candidates_probs, generator=generator).unsqueeze(-1)
+    # chosen_indices = torch.gather(candidates_indices, -1, chosen_candidates).squeeze(-1)
+    # if as_mask:
+    #     return one_hot(chosen_indices, metric.shape[-1])
+    # else:
+    #     return chosen_indices
 
 @torch.no_grad()
 def sample_top_p(metric, p, as_mask=False, normalize_input=False, generator=None):
@@ -140,6 +184,15 @@ def sample_min_p(metric, p, as_mask=False, generator=None):
         return one_hot(chosen_indices, metric.shape[-1])
     else:
         return chosen_indices
+
+
+# TODO: implement score sudoku
+# @torch.no_grad()
+# def score_sudoku(batch, tokenizer, sampler):
+#     bs = batch["input_ids"].shape[0]
+#     solutions_tokenized = batch["input_ids"].clone()
+#     pass
+
 
 
 def calculate_flops_per_batch(config, model, vocab_size, non_emb_params=None, method="hoffmann"):
