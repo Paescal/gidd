@@ -2,6 +2,7 @@ import re
 import math
 
 import torch
+import numpy as np
 from functools import partial
 from torch.nn.functional import one_hot
 
@@ -185,13 +186,48 @@ def sample_min_p(metric, p, as_mask=False, generator=None):
     else:
         return chosen_indices
 
+@torch.no_grad()
+def correct_cells_score(samples, solutions_tokenized):
+    correct_cells = (solutions_tokenized == samples).to(int)
+    return torch.sum(correct_cells, dim=-1)
 
-# TODO: implement score sudoku
-# @torch.no_grad()
-# def score_sudoku(batch, tokenizer, sampler):
-#     bs = batch["input_ids"].shape[0]
-#     solutions_tokenized = batch["input_ids"].clone()
-#     pass
+@torch.no_grad()
+def row_col_box_set_score(sudoku):
+    row_sets = [set(row) for row in sudoku]
+    col_sets = [set(col) for col in sudoku.T]
+    box_size = int(len(sudoku) ** 0.5)
+    box_sets =[set(sudoku[i*box_size:(i+1)*box_size, j*box_size:(j+1)*box_size].flatten()) for i in range(box_size) for j in range(box_size)]
+    score = 0
+    for curr_set in row_sets + col_sets + box_sets:
+        for i in range(len(sudoku)):
+            if str(i + 1) in curr_set:
+                score += 1
+    return score
+
+@torch.no_grad()
+def score_sudoku(samples, diffusion_mask, solutions_tokenized, tokenizer):
+    num_samples = samples.shape[0]
+    seq_len = samples.shape[-1]
+    cells_score = correct_cells_score(samples, solutions_tokenized)
+    given_cells = torch.sum((diffusion_mask == 0).to(int), dim=-1)
+    filled_cells_score = cells_score - given_cells
+    max_filled_cells_score = seq_len - given_cells
+    mean_filled_cells_score_fraction = torch.sum(filled_cells_score) / torch.sum(max_filled_cells_score)
+
+    fully_correct_samples_fraction = torch.sum(cells_score == (seq_len)) / num_samples
+
+    sudoku_size = int(seq_len ** 0.5)
+    samples_decoded = np.array([tokenizer.decode(samples[i], skip_special_tokens=False, clean_up_tokenization_spaces=False).split() for i in range(len(samples))])
+    samples_decoded = samples_decoded.reshape((-1, sudoku_size, sudoku_size))
+    set_score = [row_col_box_set_score(sample) for sample in samples_decoded]
+    max_set_score = sudoku_size * sudoku_size * 3
+    mean_set_score_fraction = np.mean(set_score) / max_set_score
+    
+    return {
+        "correctly_filled_cells": mean_filled_cells_score_fraction,
+        "correct_solution": fully_correct_samples_fraction,
+        "set_score": mean_set_score_fraction,
+    }
 
 
 

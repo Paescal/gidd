@@ -325,8 +325,11 @@ def main(config):
 
                         score_batch = {k: v.to(device, non_blocking=True) for k, v in score_batch.items()}
                         # TODO: this assumes the dataset is sudoku
-                        # sudoku_metrics = score_sudoku(score_batch, tokenizer, sampler)
-                        sudoku_metrics = None
+                        puzzles_tokenized = score_batch["puzzle_ids"]
+                        diffusion_mask = score_batch["diffusion_mask"]
+                        solutions_tokenized = score_batch["input_ids"]
+                        samples = sampler.generate_from_given(puzzles_tokenized, diffusion_mask, config.sampling.num_denoising_steps, max_length=config.model.max_seq_len, decode=False, show_progress=False, keep_history=False)
+                        sudoku_metrics = score_sudoku(samples, diffusion_mask, solutions_tokenized, tokenizer)
                         
                         for k, v in sudoku_metrics.items():
                             score_metrics[k] = score_metrics.get(k, 0) + (v.item() if isinstance(v, torch.Tensor) else v) * bs
