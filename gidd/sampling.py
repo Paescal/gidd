@@ -50,7 +50,10 @@ class Sampler(nn.Module):
             texts = self.tokenizer.batch_decode(z_t, skip_special_tokens=True)
             return texts
         else:
-            return z_t, history if keep_history else z_t
+            if keep_history:
+                return z_t, history
+            else:
+                return z_t
 
 class GiddSampler(Sampler):
     class DenoisingStep(nn.Module):

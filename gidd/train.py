@@ -315,38 +315,39 @@ def main(config):
 
             if ((step + 1) % config.logging.score_freq) == 0:
                 with torch.no_grad():
-                    score_start_time = time.time()
-                    model.eval()
+                    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+                        score_start_time = time.time()
+                        model.eval()
 
-                    score_metrics = {}
-                    num_score_samples = 0
-                    for i, score_batch in enumerate(tqdm.tqdm(score_dl, desc="Score", dynamic_ncols=True, total=config.logging.num_score_batches, disable=not is_main_process)):
-                        bs = score_batch["input_ids"].size(0)
+                        score_metrics = {}
+                        num_score_samples = 0
+                        for i, score_batch in enumerate(tqdm.tqdm(score_dl, desc="Score", dynamic_ncols=True, total=config.logging.num_score_batches, disable=not is_main_process)):
+                            bs = score_batch["input_ids"].size(0)
 
-                        score_batch = {k: v.to(device, non_blocking=True) for k, v in score_batch.items()}
-                        # TODO: this assumes the dataset is sudoku
-                        puzzles_tokenized = score_batch["puzzle_ids"]
-                        diffusion_mask = score_batch["diffusion_mask"]
-                        solutions_tokenized = score_batch["input_ids"]
-                        samples = sampler.generate_from_given(puzzles_tokenized, diffusion_mask, config.sampling.num_denoising_steps, max_length=config.model.max_seq_len, decode=False, show_progress=False, keep_history=False)
-                        sudoku_metrics = score_sudoku(samples, diffusion_mask, solutions_tokenized, tokenizer)
-                        
-                        for k, v in sudoku_metrics.items():
-                            score_metrics[k] = score_metrics.get(k, 0) + (v.item() if isinstance(v, torch.Tensor) else v) * bs
+                            score_batch = {k: v.to(device, non_blocking=True) for k, v in score_batch.items()}
+                            # TODO: this assumes the dataset is sudoku
+                            puzzles_tokenized = score_batch["puzzle_ids"]
+                            diffusion_mask = score_batch["diffusion_mask"]
+                            solutions_tokenized = score_batch["input_ids"]
+                            samples = sampler.generate_from_given(puzzles_tokenized, diffusion_mask, config.sampling.num_denoising_steps, max_length=config.model.max_seq_len, decode=False, show_progress=False, keep_history=False)
+                            sudoku_metrics = score_sudoku(samples[:, 1:-1], diffusion_mask[:, 1:-1], solutions_tokenized[:, 1:-1], tokenizer)
+                            
+                            for k, v in sudoku_metrics.items():
+                                score_metrics[k] = score_metrics.get(k, 0) + (v.item() if isinstance(v, torch.Tensor) else v) * bs
 
-                        num_score_samples += bs
+                            num_score_samples += bs
 
-                        if i >= config.logging.num_score_batches - 1:
-                            break
+                            if i >= config.logging.num_score_batches - 1:
+                                break
 
-                    dist.barrier()
+                        dist.barrier()
 
-                    score_elapsed_time = time.time() - score_start_time
-                    logger.log({
-                        "score/time_taken": score_elapsed_time,
-                        **{f"score/{k}": v / num_score_samples for k, v in score_metrics.items()},
-                    }, step=step)
-                    model.train()
+                        score_elapsed_time = time.time() - score_start_time
+                        logger.log({
+                            "score/time_taken": score_elapsed_time,
+                            **{f"score/{k}": v / num_score_samples for k, v in score_metrics.items()},
+                        }, step=step)
+                        model.train()
 
             ### SAVE ###
 
