@@ -222,11 +222,13 @@ def score_sudoku(samples, diffusion_mask, solutions_tokenized, tokenizer):
     set_score = [row_col_box_set_score(sample) for sample in samples_decoded]
     max_set_score = sudoku_size * sudoku_size * 3
     mean_set_score_fraction = np.mean(set_score) / max_set_score
+    valid_sudoku_fraction = np.sum(np.array(set_score) == max_set_score) / num_samples
     
     return {
         "correctly_filled_cells": mean_filled_cells_score_fraction,
         "correct_solution": fully_correct_samples_fraction,
         "set_score": mean_set_score_fraction,
+        "valid_sudoku": valid_sudoku_fraction,
     }
 
 
