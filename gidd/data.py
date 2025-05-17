@@ -143,8 +143,11 @@ def subsample_collator(config, tokenizer, examples, text_key="text"):
     bos_token_id = tokenizer.bos_token_id or tokenizer.cls_token_id
     eos_token_id = tokenizer.eos_token_id or tokenizer.sep_token_id
     
-    diffusion_masks = [x['diffusion_mask'] for x in examples]
     puzzles = [x['puzzle'] for x in examples]
+    if config.training.use_diffusion_mask:
+        diffusion_masks = [x['diffusion_mask'] for x in examples]
+    else:
+        diffusion_masks = ['1' * len(x['diffusion_mask']) for x in examples]
     examples = [x[text_key] for x in examples]
     tokens = tokenizer(examples, truncation=False, return_tensors="np")
     puzzle_tokens = tokenizer(puzzles, truncation=False, return_tensors="np")

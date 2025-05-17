@@ -27,6 +27,7 @@ training:
   low_discrepancy_sampling: True
   dtype: bf16
   compile_model: False #True
+  use_diffusion_mask: False
 
 loss:
   loss_type: gidd

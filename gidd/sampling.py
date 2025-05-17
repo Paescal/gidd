@@ -133,11 +133,11 @@ class GiddSampler(Sampler):
         diffusion_mask = diffusion_mask.to(device, non_blocking=True)
         z_t = initial_z_t.clone()
         history = [initial_z_t.clone()]
-        print("entering sampling loop in _do_generate_from_given")
+        # print("entering sampling loop in _do_generate_from_given")
         for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
-            print(f"sampling step {i}")
+            # print(f"sampling step {i}")
             z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=diffusion_mask)
-            print(f"sampling step {i} done")
+            # print(f"sampling step {i} done")
             if keep_history:
                 history.append(z_t.clone())
         if keep_history:
