@@ -113,7 +113,7 @@ def main(config):
 
         optimizer = get_optimizer(config, trainer)
         
-        sampler = get_sampler(config, model, tokenizer, noise_schedule, compile_step=config.training.compile_model)
+        sampler = get_sampler(config, model, tokenizer, noise_schedule, compile_step=config.compilation.compile_torch)
 
         state = TrainingState(
             epoch=0,
@@ -158,7 +158,7 @@ def main(config):
 
     trainable_params = sum(p.numel() for p in trainer.parameters() if p.requires_grad)
 
-    if config.training.compile_model:
+    if config.compilation.compile_torch:
         opt_trainer = torch.compile(trainer)
     else:
         opt_trainer = trainer

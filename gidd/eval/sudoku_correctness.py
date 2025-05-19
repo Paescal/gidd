@@ -71,6 +71,7 @@ def show_history(histories, diffusion_mask):
     
     num_steps, seq_len = sample_history.shape
     changing_indices = [i for i in range(seq_len) if changing_mask[i] == 1]
+    # changing_indices = [i for i in range(seq_len)]
     # changing_indices = changing_indices[:30]
 
     print("History for changing tokens only:")
@@ -97,6 +98,56 @@ def show_history(histories, diffusion_mask):
     print("-" * len(header))
     print("Note: '.' indicates the token remained unchanged from the previous step.")
 
+def print_sudoku(sudoku, tokenizer):
+    for i, row in enumerate(sudoku):
+        for j, element in enumerate(row):
+            if element == tokenizer.mask_token_id:
+                element = '.'
+            elif element >= 9:
+                element = 'X'
+            print(element, end=' ')
+            if (j + 1) % 3 == 0:
+                print("", end=' ')
+        print()
+        if (i + 1) % 3 == 0:
+            print()
+
+def print_history_interactive(histories, diffusion_mask, tokenizer):
+    # histories.shape = (num_samples, num_denoising_steps + 1, seq_len)
+    if histories[0, 0, 0] == tokenizer.bos_token_id:
+        histories = histories[:, :, 1:]
+    if histories[0, 0, -1] == tokenizer.eos_token_id:
+        histories = histories[:, :, :-1]
+    
+    num_samples = histories.shape[0]
+    num_denoising_steps = histories.shape[1] - 1
+    seq_len = histories.shape[2]
+    sudoku_size = int(seq_len ** 0.5)
+    sample_id = 0
+    diffusion_step = 0
+
+    while True:
+        print("\033c", end="")  # Clear screen (for better viewing)
+        print(f"Sample {sample_id + 1} of {num_samples}, Step {diffusion_step} of {num_denoising_steps}")
+        print_sudoku(histories[sample_id, diffusion_step].reshape(sudoku_size, sudoku_size).numpy(), tokenizer)
+
+        cmd = input("\n[w] next sample, [s] prev sample, [d] next step, [a] prev step, [q] quit: ").strip().lower()
+        if cmd == "w":
+            if sample_id < num_samples - 1:
+                sample_id += 1
+        elif cmd == "s":
+            if sample_id > 0:
+                sample_id -= 1
+        elif cmd == "d":
+            if diffusion_step < num_denoising_steps:
+                diffusion_step += 1
+        elif cmd == "a":
+            if diffusion_step > 0:
+                diffusion_step -= 1
+        elif cmd == "q":
+            break
+        else:
+            print("Invalid command.")
 
 # Evaluation for samples starting from puzzles
 import hydra
@@ -144,8 +195,7 @@ def main(config):
     puzzles_tokenized = torch.tensor(tokenizer(puzzles['puzzle'])['input_ids'])
     solutions_tokenized = torch.tensor(tokenizer(solutions['solution'])['input_ids'])
     diffusion_mask = (puzzles_tokenized == tokenizer.mask_token_id).to(int)
-    # TODO: set compile_step based on something
-    sampler = get_sampler(ckpt_config, model, tokenizer, noise_schedule, sampling_config=config, compile_step=False, min_p=config.min_p)
+    sampler = get_sampler(ckpt_config, model, tokenizer, noise_schedule, sampling_config=config, compile_step=config.compilation.compile_torch, min_p=config.min_p)
     model.eval()
 
     samples = []
@@ -155,7 +205,6 @@ def main(config):
             for i in range(0, num_samples, config.batch_size):
                 bs = min(config.batch_size, num_samples - i)
                 # TODO: how is the max_length in SamplerInstance.model.config.max_seq_len set? Once that is done automatically for sudoku, no need to pass it here
-                # TODO: add parameter to return the generation history
                 z_t, history = sampler.generate_from_given(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False, keep_history=True)
                 samples.append(z_t)
                 histories.append(history)
@@ -171,10 +220,17 @@ def main(config):
     torch.save(samples, hydra.utils.to_absolute_path(pre_correction_samples_path))
 
     score_samples(samples, diffusion_mask, solutions_tokenized, tokenizer)
+    
+    # print_history_interactive(histories, diffusion_mask, tokenizer)
+
+    print_sudoku(puzzles_tokenized[0, 1:-1].reshape(9, 9).numpy(), tokenizer)
+    print_sudoku(samples[0].reshape(9, 9).numpy(), tokenizer)
+    print_sudoku(solutions_tokenized[0].reshape(9, 9).numpy(), tokenizer)
+
     # print(histories[0, :, :5])
     # print(puzzles_tokenized[0])
-    show_history(histories, diffusion_mask)
-    print(histories[0, :, 8])
+    # show_history(histories, diffusion_mask)
+    # print(histories[0, :, 8])
 
     # with tqdm.tqdm(total=num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
     #     with torch.no_grad(), torch.autocast(device.type, dtype=dtype):

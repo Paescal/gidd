@@ -37,7 +37,8 @@ def main(args):
     config.training.eval_batch_size = args.batch_size
     dtype = parse_dtype(config.training.dtype)
 
-    model = torch.compile(model)
+    if args.compilation.compile_torch:
+        model = torch.compile(model)
 
     samples_path = hydra.utils.to_absolute_path(args.samples_path)
     z_ts = torch.load(samples_path, weights_only=True)
@@ -88,15 +89,15 @@ def main(args):
         })
     samples = torch.cat(samples, dim=0).cpu()
 
-    torch.save(samples, args.corrected_samples_path)
+    torch.save(samples, hydra.utils.to_absolute_path(args.corrected_samples_path))
 
-    df = pd.DataFrame(metrics)
-    df["improvement"] = df["final_acc"] - df["init_acc"]
+    # df = pd.DataFrame(metrics)
+    # df["improvement"] = df["final_acc"] - df["init_acc"]
 
-    df.to_csv(hydra.utils.to_absolute_path(args.metrics_path), index=False)
+    # df.to_csv(hydra.utils.to_absolute_path(args.metrics_path), index=False)
 
-    # compute mean and std of all metrics, print as markdown table
-    print(f"Results for {args.path} (temp={args.temp}, max_patience={args.max_patience}):\n{df.describe().to_markdown()}")
+    # # compute mean and std of all metrics, print as markdown table
+    # print(f"Results for {args.path} (temp={args.temp}, max_patience={args.max_patience}):\n{df.describe().to_markdown()}")
 
 if __name__ == "__main__":
     main()

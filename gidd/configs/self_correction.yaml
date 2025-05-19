@@ -1,3 +1,7 @@
+defaults:
+  - compilation: compile_torch
+  - _self_
+
 path: ???
 samples_path: ???
 corrected_samples_path: ???

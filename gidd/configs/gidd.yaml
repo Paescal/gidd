@@ -6,6 +6,7 @@ defaults:
   - model: 6M
   - optimizer: adam
   - sampling: training_sampling
+  - compilation: compile_torch
   - _self_
 
 model:
@@ -26,7 +27,6 @@ training:
   warmup_steps: 10_000 #10000
   low_discrepancy_sampling: True
   dtype: bf16
-  compile_model: False #True
   use_diffusion_mask: False
 
 loss:
