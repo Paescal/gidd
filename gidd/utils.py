@@ -205,10 +205,20 @@ def row_col_box_set_score(sudoku):
     return score
 
 @torch.no_grad()
-def score_sudoku(samples, diffusion_mask, solutions_tokenized, tokenizer):
-    num_samples = samples.shape[0]
-    seq_len = samples.shape[-1]
-    cells_score = correct_cells_score(samples, solutions_tokenized)
+def score_sudoku(samples_tokenized, diffusion_mask, solutions_tokenized, tokenizer):
+    seq_len_original = samples_tokenized.shape[-1]
+    sudoku_size = int(seq_len_original ** 0.5)
+    seq_len = sudoku_size ** 2
+    if seq_len_original == seq_len + 2:
+        samples_tokenized = samples_tokenized[:, 1:-1]
+        diffusion_mask = diffusion_mask[:, 1:-1]
+        solutions_tokenized = solutions_tokenized[:, 1:-1]
+    elif seq_len_original != seq_len:
+        raise ValueError(f"Unexpected sequence length: {seq_len_original}, expected {seq_len + 2} or {seq_len}")
+    
+    num_samples = samples_tokenized.shape[0]
+    seq_len = samples_tokenized.shape[-1]
+    cells_score = correct_cells_score(samples_tokenized, solutions_tokenized)
     given_cells = torch.sum((diffusion_mask == 0).to(int), dim=-1)
     filled_cells_score = cells_score - given_cells
     max_filled_cells_score = seq_len - given_cells
@@ -216,8 +226,7 @@ def score_sudoku(samples, diffusion_mask, solutions_tokenized, tokenizer):
 
     fully_correct_samples_fraction = torch.sum(cells_score == (seq_len)) / num_samples
 
-    sudoku_size = int(seq_len ** 0.5)
-    samples_decoded = np.array([tokenizer.decode(samples[i], skip_special_tokens=False, clean_up_tokenization_spaces=False).split() for i in range(len(samples))])
+    samples_decoded = np.array([tokenizer.decode(samples_tokenized[i], skip_special_tokens=False, clean_up_tokenization_spaces=False).split() for i in range(len(samples_tokenized))])
     samples_decoded = samples_decoded.reshape((-1, sudoku_size, sudoku_size))
     set_score = [row_col_box_set_score(sample) for sample in samples_decoded]
     max_set_score = sudoku_size * sudoku_size * 3
