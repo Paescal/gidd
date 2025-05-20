@@ -129,6 +129,24 @@ class GiddSampler(Sampler):
         # TODO: when model was trained without diffusion_mask, how do you insert the knowledge of the given puzzle?
         # Idea: pass a modified diffusion_mask to not change anything until the denoising step is reached for which the puzzle is an expected state.
         # With uniform noise, the expected state is never k correct tokens and the rest masked, so potentially randomly unmask some non-given tokens.
+        
+        # count the number of given tokens
+        num_given_tokens = torch.sum(diffusion_mask == 0, dim=-1) - 2 # bos, eos
+        seq_len_wo_bos_eos = diffusion_mask.shape[-1] - 2
+        
+        # compute the denoising step for which the updated initial_z_t is most likely
+        # marginal forward distribution: qt(zt|x) = 1 / Ct  ((1 − t)x + tm + ct1).
+        # -> num_given_tokens / seq_len = (1 - t) / (1 - t + t + ct * N)? Since 1-t, t and ct * N are the relative weights for denoised, masked and random tokens
+        fraction_denoised = num_given_tokens / seq_len_wo_bos_eos
+        most_likely_t = self.sampling_step.noise_schedule.get_t(fraction_denoised)
+        # TODO: find the closest t in the ts array to most_likely_t
+        
+        # randomly unmask some non-given tokens from initial_z_t based on the number of given tokens
+        # -> ctN = (1 - t) / (num_given_tokens / seq_len) - 1
+        ctN = (1 - most_likely_t) / fraction_denoised - 1
+
+        # in the loop: set the current diffusion_mask to 0 where the above computed denoising step is not yet reached
+        
         ts = torch.linspace(0, 1, num_denoising_steps + 1, device=device).unsqueeze(-1)
         ts = (1 - 2 * self.t_eps) * ts + self.t_eps
         

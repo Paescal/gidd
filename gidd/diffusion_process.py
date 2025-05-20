@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -63,6 +64,34 @@ class HybridDiffusion(NoiseSchedule):
         self.register_buffer("mask", mask, persistent=False)
         self.register_buffer("log_B", torch.tensor(float(log_B)).clip(-clip_noise))
         self.register_buffer("log_gamma", torch.tensor(float(gamma)).log())
+    
+    def get_t(self, fraction_denoised):
+        # marginal forward distribution: qt(zt|x) = 1 / Ct  ((1 − t)x + tm + ct1).
+        # fraction_denoised = num_given_tokens / seq_len
+        # fraction_denoised = (1 - t) / (1 - t + t + ct * N) = (1 - t) / (1 + ct * N), N = vocab_size, ct multiplied by N, because ct is the weight for each token in the vocab, but I care about the total weight for a random token
+        # ct = B * (t ** (gamma / 2)) * ((1 - t) ** (gamma / 2))
+        # -> fraction_denoised = (1 - t) / ( 1 + N * B * (t ** (gamma / 2)) * ((1 - t) ** (gamma / 2)))
+        # B = (2 ** gamma * pu) / (N * (1 - pu))
+        # -> fraction_denoised = (1 - t) / ( 1 +  N * (2 ** gamma * pu) / (N * (1 - pu)) * (t ** (gamma / 2)) * ((1 - t) ** (gamma / 2)))
+        # -> fraction_denoised= (1 - t) / ( 1 +  (2 ** gamma * pu) / (1 - pu) * (t ** (gamma / 2)) * ((1 - t) ** (gamma / 2)))
+        
+        # now solve for t, assuming gamma = 1
+        # see derivation pdf for details
+        f = fraction_denoised
+        a = 2 * self.p_uniform / (1 - self.p_uniform)
+        A = -(f * a) ** 2 - 1
+        B = (f * a) ** 2 + 2 * (1 - f)
+        C = -(1 - f) ** 2
+        t_plus = (-B + math.sqrt(B ** 2 - 4 * A * C)) / (2 * A)
+        t_minus = (-B - math.sqrt(B ** 2 - 4 * A * C)) / (2 * A)
+        if f == (1 - t_plus) / (1 + a * math.sqrt(t_plus * (1 - t_plus))):
+            actual_t = t_plus
+        elif f == (1 - t_minus) / (1 + a * math.sqrt(t_minus * (1 - t_minus))):
+            actual_t = t_minus
+        else:
+            raise ValueError(f"Invalid fraction_denoised: {fraction_denoised}, t_plus: {t_plus}, t_minus: {t_minus}")
+
+        return actual_t
     
     def get_alpha_betapi(self, t, eps=1e-4):
         t = t[:, None]
