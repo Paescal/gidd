@@ -77,6 +77,7 @@ class HybridDiffusion(NoiseSchedule):
         
         # now solve for t, assuming gamma = 1
         # see derivation pdf for details
+        # TODO: vectorize this for fraction_denoised of shape (batch_size)
         f = fraction_denoised
         a = 2 * self.p_uniform / (1 - self.p_uniform)
         A = -(f * a) ** 2 - 1
