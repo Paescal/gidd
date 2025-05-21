@@ -22,8 +22,12 @@ class Loss(torch.nn.Module, ABC):
 
         if reduction == "tokenmean":
             # num_tokens = attention_mask.numel()
-            num_tokens = torch.sum(diffusion_mask)
-            loss = loss.sum() / num_tokens
+            total_tokens = diffusion_mask.sum().float().detach()
+            if self.config.training.world_size > 1:
+                torch.distributed.all_reduce(total_tokens)
+                total_tokens /= self.config.training.world_size
+            loss = (loss * diffusion_mask).sum() / total_tokens
+            # loss = (loss * diffusion_mask).sum() / num_tokens
         else:  # reduction == "none"
             pass
 
