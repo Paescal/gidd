@@ -38,6 +38,10 @@ class Sampler(nn.Module):
     def _do_generate_from_given(self, initial_z_t, diffusion_mask, num_denoising_steps, max_length, show_progress, device, keep_history=False):
         raise NotImplementedError
     
+    @abstractmethod
+    def _do_generate_from_expected_t(self, initial_z_t, diffusion_mask, num_denoising_steps, max_length, show_progress, device, keep_history=False):
+        raise NotImplementedError
+    
     # Generate starting from a given z_t, the diffusion_mask is a tensor with the same shape as z_t of 0s and 1s, where 1 indicates that the token is NOT given and needs to be denoised
     @torch.no_grad()
     def generate_from_given(self, z_t, diffusion_mask, num_denoising_steps=128, max_length=None, decode=True, show_progress=True, keep_history=False):
@@ -48,6 +52,24 @@ class Sampler(nn.Module):
         # print("calling _do_generate_from_given")
         z_t, history = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device, keep_history=keep_history)
         # print("done calling _do_generate_from_given")
+
+        if decode:
+            texts = self.tokenizer.batch_decode(z_t, skip_special_tokens=True)
+            return texts
+        else:
+            if keep_history:
+                return z_t, history
+            else:
+                return z_t
+    @torch.no_grad()
+    def generate_from_expected_t(self, z_t, diffusion_mask, num_denoising_steps=128, max_length=None, decode=True, show_progress=True, keep_history=False):
+        max_length = max_length or self.model.config.max_seq_len
+        # print("getting device")
+        device = next(self.model.parameters()).device
+
+        # print("calling _do_generate_from_expected_t")
+        z_t, history = self._do_generate_from_expected_t(z_t, diffusion_mask=diffusion_mask, num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device, keep_history=keep_history)
+        # print("done calling _do_generate_from_expected_t")
 
         if decode:
             texts = self.tokenizer.batch_decode(z_t, skip_special_tokens=True)
@@ -167,7 +189,8 @@ class GiddSampler(Sampler):
         ts = (1 - 2 * self.t_eps) * ts + self.t_eps
         
         # find the step where the t in the ts array is closest to most_likely_t
-        ts_expanded= ts.unsqueeze(0).expand((num_given_tokens.shape[0], -1)) # shape of ts_expanded: (num_samples, num_denoising_steps + 1)
+        # TODO: put things on the right device at the right time
+        ts_expanded= ts.cpu().unsqueeze(0).expand((num_given_tokens.shape[0], -1)) # shape of ts_expanded: (num_samples, num_denoising_steps + 1)
         most_likely_t_discretized, most_likely_step = torch.min(torch.abs(ts_expanded - most_likely_t.unsqueeze(-1)), dim=-1)
         
         ts = ts.unsqueeze(-1)

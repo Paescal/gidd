@@ -76,7 +76,6 @@ class HybridDiffusion(NoiseSchedule):
         
         # now solve for t, assuming gamma = 1
         # see derivation pdf for details
-        # TODO: vectorize this for fraction_denoised of shape (batch_size)
         f = fraction_denoised
         a = 2 * self.p_uniform / (1 - self.p_uniform)
         fa_sq = torch.square(f * a)
@@ -85,15 +84,10 @@ class HybridDiffusion(NoiseSchedule):
         C = - torch.square(1 - f)
         B_sq = torch.square(B)
         t_plus = (- B + torch.sqrt(B_sq - 4 * A * C)) / (2 * A)
-        t_minus = (- B - torch.sqrt(B_sq - 4 * A * C)) / (2 * A)
-        if f == (1 - t_plus) / (1 + a * torch.sqrt(t_plus * (1 - t_plus))):
-            actual_t = t_plus
-        elif f == (1 - t_minus) / (1 + a * torch.sqrt(t_minus * (1 - t_minus))):
-            actual_t = t_minus
-        else:
-            raise ValueError(f"Invalid fraction_denoised: {fraction_denoised}, t_plus: {t_plus}, t_minus: {t_minus}")
-
-        return actual_t
+        # the corresponding t_minus = (- B - torch.sqrt(B_sq - 4 * A * C)) / (2 * A) does not need to be considered,
+        # because it can be shown that the correct t is always t_plus for f, p_uniform in (0, 1).
+        # TODO: This might not be defined for p_uniform = 1, since it would lead to a division by zero in the calculation of a
+        return t_plus
     
     def get_alpha_betapi(self, t, eps=1e-4):
         t = t[:, None]

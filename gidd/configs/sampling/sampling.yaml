@@ -1,4 +1,4 @@
-position_metric: margin # [max, margin]
+position_metric: max # [max, margin]
 position_sampling_strategy: all # [all, top_k, top_p, min_p]
 position_sampling_strategy_args:
   top_k: 8
