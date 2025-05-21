@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -80,14 +79,16 @@ class HybridDiffusion(NoiseSchedule):
         # TODO: vectorize this for fraction_denoised of shape (batch_size)
         f = fraction_denoised
         a = 2 * self.p_uniform / (1 - self.p_uniform)
-        A = -(f * a) ** 2 - 1
-        B = (f * a) ** 2 + 2 * (1 - f)
-        C = -(1 - f) ** 2
-        t_plus = (-B + math.sqrt(B ** 2 - 4 * A * C)) / (2 * A)
-        t_minus = (-B - math.sqrt(B ** 2 - 4 * A * C)) / (2 * A)
-        if f == (1 - t_plus) / (1 + a * math.sqrt(t_plus * (1 - t_plus))):
+        fa_sq = torch.square(f * a)
+        A = - fa_sq - 1
+        B = fa_sq + 2 * (1 - f)
+        C = - torch.square(1 - f)
+        B_sq = torch.square(B)
+        t_plus = (- B + torch.sqrt(B_sq - 4 * A * C)) / (2 * A)
+        t_minus = (- B - torch.sqrt(B_sq - 4 * A * C)) / (2 * A)
+        if f == (1 - t_plus) / (1 + a * torch.sqrt(t_plus * (1 - t_plus))):
             actual_t = t_plus
-        elif f == (1 - t_minus) / (1 + a * math.sqrt(t_minus * (1 - t_minus))):
+        elif f == (1 - t_minus) / (1 + a * torch.sqrt(t_minus * (1 - t_minus))):
             actual_t = t_minus
         else:
             raise ValueError(f"Invalid fraction_denoised: {fraction_denoised}, t_plus: {t_plus}, t_minus: {t_minus}")

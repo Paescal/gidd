@@ -120,6 +120,19 @@ def sample_categorical(probs, generator=None):
     return samples
 
 @torch.no_grad()
+def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0, generator=None):
+    metric_is_non_zero_mask = metric != 0
+    if gumbel_noise_coefficient > 0:
+        metric = metric + torch.distributions.gumbel.Gumbel(0, gumbel_noise_coefficient).sample(metric.shape)
+        pass
+    top_k_thresholds = torch.topk(metric, k, dim=-1).values[..., -1].unsqueeze(-1)
+    top_k_mask = metric >= top_k_thresholds
+    top_k_mask = top_k_mask * metric_is_non_zero_mask
+    return top_k_mask
+    
+
+
+@torch.no_grad()
 # TODO: all_candidates=bool is only a temporary variable for testing selecting all candidates
 def sample_top_k(metric, k, as_mask=False, all_candidates=False, generator=None):
     top_k_thresholds = torch.topk(metric, k + 1, dim=-1).values[..., -1].unsqueeze(-1)
@@ -222,7 +235,8 @@ def score_sudoku(samples_tokenized, diffusion_mask, solutions_tokenized, tokeniz
     given_cells = torch.sum((diffusion_mask == 0).to(int), dim=-1)
     filled_cells_score = cells_score - given_cells
     max_filled_cells_score = seq_len - given_cells
-    mean_filled_cells_score_fraction = torch.sum(filled_cells_score) / torch.sum(max_filled_cells_score)
+    # mean_filled_cells_score_fraction = torch.sum(filled_cells_score) / torch.sum(max_filled_cells_score)
+    mean_filled_cells_score_fraction = torch.mean(filled_cells_score / max_filled_cells_score)
 
     fully_correct_samples_fraction = torch.sum(cells_score == (seq_len)) / num_samples
 

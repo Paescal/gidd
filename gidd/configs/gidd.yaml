@@ -12,7 +12,7 @@ defaults:
 model:
   type: diffusion
   diffusion_process: gidd
-  p_uniform: 0.1
+  p_uniform: 0.0
   t_eps: 1e-4
 
 training:
@@ -27,7 +27,7 @@ training:
   warmup_steps: 10_000 #10000
   low_discrepancy_sampling: True
   dtype: bf16
-  use_diffusion_mask: False
+  use_diffusion_mask: True
 
 loss:
   loss_type: gidd

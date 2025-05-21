@@ -27,7 +27,6 @@ class Loss(torch.nn.Module, ABC):
                 torch.distributed.all_reduce(total_tokens)
                 total_tokens /= self.config.training.world_size
             loss = (loss * diffusion_mask).sum() / total_tokens
-            # loss = (loss * diffusion_mask).sum() / num_tokens
         else:  # reduction == "none"
             pass
 
