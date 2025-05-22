@@ -18,11 +18,11 @@ model:
 training:
   resume: null
   seed: 1
-  train_batch_size: 64
+  train_batch_size: 128 # 64
   eval_batch_size: 64
   score_batch_size: 64
   # num_train_steps: 1 epoch = 1_889_993 / 64 = 29_532
-  num_train_steps: 118_128 # 236_256 # 118_128
+  num_train_steps: 236_256 # 236_256 # 118_128
   lr_schedule: cosine
   warmup_steps: 10_000 #10000
   low_discrepancy_sampling: True

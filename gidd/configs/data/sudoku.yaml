@@ -1,8 +1,10 @@
 defaults:
   - defaults
 
-dataset_name: sudoku
-dataset_subset: 3m
+dataset_name: shah
+
+# dataset_name: sudoku
+# dataset_subset: 3m
 # dataset_name: gidd/datasets/sudoku/train/
 # dataset_subset: 3m
 

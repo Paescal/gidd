@@ -1,6 +1,6 @@
 hidden_size: 256
 cond_dim: 128
-n_blocks: 6
+n_blocks: 8
 n_heads: 8
 dropout: 0.0
 max_seq_len: 83 # 81 + 1 + 1 for sudoku, bos, eos # must be power of 2?
