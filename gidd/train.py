@@ -335,7 +335,10 @@ def main(config):
                             diffusion_mask = score_batch["diffusion_mask"]
                             solutions_tokenized = score_batch["input_ids"]
                             # print("generating samples")
-                            samples = sampler.generate_from_given(puzzles_tokenized, diffusion_mask, config.sampling.num_denoising_steps, max_length=config.model.max_seq_len, decode=False, show_progress=False, keep_history=False)
+                            if config.training.use_diffusion_mask:
+                                samples = sampler.generate_from_given(puzzles_tokenized, diffusion_mask, config.sampling.num_denoising_steps, max_length=config.model.max_seq_len, decode=False, show_progress=False, keep_history=False)
+                            else:
+                                samples = sampler.generate_from_expected_t(puzzles_tokenized, diffusion_mask, config.sampling.num_denoising_steps, max_length=config.model.max_seq_len, decode=False, show_progress=False, keep_history=False)
                             # print("scoring samples")
                             sudoku_metrics = score_sudoku(samples[:, 1:-1], diffusion_mask[:, 1:-1], solutions_tokenized[:, 1:-1], tokenizer)
                             # print("scoring done")

@@ -71,7 +71,7 @@ def show_history(histories, diffusion_mask):
     
     num_steps, seq_len = sample_history.shape
     changing_indices = [i for i in range(seq_len) if changing_mask[i] == 1]
-    # changing_indices = [i for i in range(seq_len)]
+    changing_indices = [i for i in range(seq_len)]
     # changing_indices = changing_indices[:30]
 
     print("History for changing tokens only:")
@@ -86,10 +86,10 @@ def show_history(histories, diffusion_mask):
     for step in range(num_steps):
         current_tokens = sample_history[step]
         if step == 0:
-            line = f"{step:<6} | " + " ".join(f"{current_tokens[i]:>4}" for i in changing_indices)
+            line = f"{num_steps - 1 - step:<6} | " + " ".join(f"{current_tokens[i]:>4}" for i in changing_indices)
         else:
             prev_tokens = sample_history[step - 1]
-            line = f"{step:<6} | " + " ".join(
+            line = f"{num_steps - 1 - step:<6} | " + " ".join(
                 f"{current_tokens[i]:>4}" if current_tokens[i] != prev_tokens[i] else "  . "
                 for i in changing_indices
             )
@@ -205,32 +205,35 @@ def main(config):
             for i in range(0, num_samples, config.batch_size):
                 bs = min(config.batch_size, num_samples - i)
                 # TODO: how is the max_length in SamplerInstance.model.config.max_seq_len set? Once that is done automatically for sudoku, no need to pass it here
-                z_t, history = sampler.generate_from_given(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False, keep_history=True)
+                if ckpt_config.training.use_diffusion_mask:
+                    z_t, history = sampler.generate_from_given(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False, keep_history=True)
+                else:
+                    z_t, history = sampler.generate_from_expected_t(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False, keep_history=True)
                 samples.append(z_t)
                 histories.append(history)
                 pbar.update(bs)
     samples = torch.cat(samples, dim=0)
     histories = torch.cat(histories, dim=0).cpu()
-    print(histories.shape)
-    print(diffusion_mask.shape)
     post_correction_samples = samples.clone()
 
     samples = samples.cpu()[:, 1:-1]
-    pre_correction_samples_path = os.path.join(ckpt_path, "../../samples/", "evaluation_samples_pre_correction.pt")
-    torch.save(samples, hydra.utils.to_absolute_path(pre_correction_samples_path))
+    # pre_correction_samples_path = os.path.join(ckpt_path, "../../samples/", "evaluation_samples_pre_correction.pt")
+    # torch.save(samples, hydra.utils.to_absolute_path(pre_correction_samples_path))
 
     score_samples(samples, diffusion_mask, solutions_tokenized, tokenizer)
     
     # print_history_interactive(histories, diffusion_mask, tokenizer)
 
-    print_sudoku(puzzles_tokenized[0, 1:-1].reshape(9, 9).numpy(), tokenizer)
-    print_sudoku(samples[0].reshape(9, 9).numpy(), tokenizer)
-    print_sudoku(solutions_tokenized[0].reshape(9, 9).numpy(), tokenizer)
+    # print_sudoku(puzzles_tokenized[0, 1:-1].reshape(9, 9).numpy(), tokenizer)
+    # print_sudoku(samples[0].reshape(9, 9).numpy(), tokenizer)
+    # print_sudoku(solutions_tokenized[0].reshape(9, 9).numpy(), tokenizer)
 
     # print(histories[0, :, :5])
     # print(puzzles_tokenized[0])
     # show_history(histories, diffusion_mask)
-    # print(histories[0, :, 8])
+    # print(f"puzzle: {puzzles_tokenized[0]}")
+    # print(f"likely start: {histories[0, 1, :]}")
+
 
     # with tqdm.tqdm(total=num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
     #     with torch.no_grad(), torch.autocast(device.type, dtype=dtype):

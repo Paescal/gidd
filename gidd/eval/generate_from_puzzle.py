@@ -19,7 +19,7 @@ def main(config):
             examples[col] = [tokenizer.bos_token + example + tokenizer.eos_token for example in examples[col]]
         return examples
     
-    num_samples = 16
+    num_samples = 160
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.set_float32_matmul_precision('high')

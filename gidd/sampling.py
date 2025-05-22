@@ -126,9 +126,10 @@ class GiddSampler(Sampler):
             # Assumption: position sampling strategies will never choose a position with metric = 0
             # print("getting update positions")
             update_positions = self.position_sampling_strategy(metric)
+            update_positions = update_positions * diffusion_mask
             # print("getting next z_t")
             next_z_t = self.token_sampling_strategy(q_st) # TODO: either sample at all positions (no sequential dependency) or sample only at the selected positions (less computation) (by gathering from q_st based on update_positions)
-            return torch.where(update_positions, next_z_t, z_t)
+            return torch.where(update_positions.bool(), next_z_t, z_t)
 
     def __init__(self, config, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
         super().__init__(model, tokenizer, noise_schedule, t_eps=t_eps)
@@ -191,7 +192,8 @@ class GiddSampler(Sampler):
         # find the step where the t in the ts array is closest to most_likely_t
         # TODO: put things on the right device at the right time
         ts_expanded= ts.cpu().unsqueeze(0).expand((num_given_tokens.shape[0], -1)) # shape of ts_expanded: (num_samples, num_denoising_steps + 1)
-        most_likely_t_discretized, most_likely_step = torch.min(torch.abs(ts_expanded - most_likely_t.unsqueeze(-1)), dim=-1)
+        most_likely_step = torch.argmin(torch.abs(ts_expanded - most_likely_t.unsqueeze(-1)), dim=-1, keepdim=True)
+        most_likely_t_discretized = ts.cpu()[most_likely_step].squeeze(-1)
         
         ts = ts.unsqueeze(-1)
         
@@ -201,6 +203,7 @@ class GiddSampler(Sampler):
         ctN = (1 - most_likely_t_discretized) / fraction_denoised - 1
         fraction_random = ctN / (1 + ctN)
         num_random_tokens = (fraction_random * seq_len_wo_bos_eos).to(int)
+        # print(f"fraction_denoised: {fraction_denoised},\nmost_likely_step: {most_likely_step},\nnum_random_tokens: {num_random_tokens}")
 
         initial_z_t_noisy = initial_z_t.clone()
         for i in range(initial_z_t.shape[0]):
@@ -224,7 +227,7 @@ class GiddSampler(Sampler):
         for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
             # print(f"sampling step {i}")
             # set the diffusion mask to 0 where the denoising step is not yet reached
-            most_likely_step_mask = (most_likely_step <= i).unsqueeze(-1)
+            most_likely_step_mask = (i < most_likely_step)
             current_diffusion_mask = diffusion_mask * most_likely_step_mask
             z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=current_diffusion_mask)
             # print(f"sampling step {i} done")

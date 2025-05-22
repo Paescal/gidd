@@ -201,7 +201,7 @@ def sample_min_p(metric, p, as_mask=False, generator=None):
 
 @torch.no_grad()
 def correct_cells_score(samples, solutions_tokenized):
-    correct_cells = (solutions_tokenized == samples).to(int)
+    correct_cells = (samples == solutions_tokenized).to(int)
     return torch.sum(correct_cells, dim=-1)
 
 @torch.no_grad()
