@@ -67,20 +67,18 @@ def build_sudoku_shah(parse_shah_dataset=True):
         easy_data_test = np.load("gidd/datasets/sudoku_shah/sudoku-test-data.npy", allow_pickle=False)
         easy_data_train = easy_data_train.astype(np.int32)
         easy_data_test = easy_data_test.astype(np.int32)
-        
-        easy_data_train_parsed = []
-        easy_data_test_parsed = []
-        for row in tqdm.tqdm(easy_data_train, desc="Parsing easy train data", total=len(easy_data_train)):
-            easy_data_train_parsed.append(parse_example(row))
-        for row in tqdm.tqdm(easy_data_test, desc="Parsing easy test data", total=len(easy_data_test)):
-            easy_data_test_parsed.append(parse_example(row))
-        easy_data_train_parsed = np.array(easy_data_train_parsed)
-        easy_data_test_parsed = np.array(easy_data_test_parsed)
-        # easy_data_train_parsed = np.array([parse_example(example) for example in easy_data_train])
-        # easy_data_test_parsed = np.array([parse_example(example) for example in easy_data_test])
 
-        ds_easy_train = Dataset.from_dict({'text': easy_data_train_parsed[:, 0], 'puzzle': easy_data_train_parsed[:, 1]})
-        ds_easy_test = Dataset.from_dict({'text': easy_data_test_parsed[:, 0], 'puzzle': easy_data_test_parsed[:, 1]})
+        easy_data_train_parsed = list(map(parse_example, easy_data_train))
+        easy_data_train_solutions, easy_data_train_puzzles = zip(*easy_data_train_parsed)
+
+        easy_data_test_parsed = list(map(parse_example, easy_data_test))
+        easy_data_test_solutions, easy_data_test_puzzles = zip(*easy_data_test_parsed)
+
+        ds_easy_train = Dataset.from_dict({'text': easy_data_train_solutions, 'puzzle': easy_data_train_puzzles})
+        ds_easy_test = Dataset.from_dict({'text': easy_data_test_solutions, 'puzzle': easy_data_test_puzzles})
+
+        ds_easy_train = ds_easy_train.map(add_diffusion_mask, batched=True)
+        ds_easy_test = ds_easy_test.map(add_diffusion_mask, batched=True)
 
         print(ds_easy_train)
         print(ds_easy_test)
@@ -95,25 +93,25 @@ def build_sudoku_shah(parse_shah_dataset=True):
     ds_easy_train = load_from_disk(f"gidd/datasets/sudoku_shah/easy/train")
     ds_easy_test = load_from_disk(f"gidd/datasets/sudoku_shah/easy/test")
 
-    easy_train_set = set(ds_easy_train)
-    easy_test_set = set(ds_easy_test)
+    easy_train_set = set(ds_easy_train['text'])
+    easy_test_set = set(ds_easy_test['text'])
+
+    easy_all_set = easy_train_set | easy_test_set
     
     ds = load_dataset("Ritvik19/Sudoku-Dataset", split="train")
     subset = "3m"
     ds = extract_dataset_subset(ds, subset)
+    ds = ds.rename_column('solution', 'text')
     print(ds)
-    all_data_solution = ds['solution']
-    all_data_puzzle = ds['puzzle']
-    all_data = np.array(list(zip(all_data_solution, all_data_puzzle, strict=True)))
 
     hard_data = []
-    for row in tqdm.tqdm(all_data, desc="Filtering hard data", total=len(all_data)):
-        if row not in easy_train_set and row not in easy_test_set:
-            hard_data.append(row)
+    for row in tqdm.tqdm(ds, desc="Filtering hard data", total=ds.num_rows):
+        if row['text'] not in easy_all_set:
+            hard_data.append([row['text'], row['puzzle']])
     hard_data = np.array(hard_data)
-    # hard_data = np.array([row for row in all_data if row not in easy_train_set and row not in easy_test_set])
 
     ds_hard = Dataset.from_dict({'text': hard_data[:, 0], 'puzzle': hard_data[:, 1]})
+    ds_hard = ds_hard.map(add_diffusion_mask, batched=True)
 
     print(ds_hard)
     
@@ -121,4 +119,4 @@ def build_sudoku_shah(parse_shah_dataset=True):
 
 
 # build_sudoku_dataset()
-build_sudoku_shah(False)
+# build_sudoku_shah(False)
