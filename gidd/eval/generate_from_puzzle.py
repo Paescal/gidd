@@ -56,7 +56,7 @@ def main(config):
                 if ckpt_config.training.use_diffusion_mask:
                     z_t = sampler.generate_from_given(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False, keep_history=False)
                 else:
-                    z_t = sampler.generate_from_expected_t(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False, keep_history=False)
+                    z_t = sampler.generate_from_expected_t(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, add_random_tokens=(ckpt_config.model.p_uniform == 0), max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False, keep_history=False)
                 samples.append(z_t)
                 pbar.update(bs)
     samples = torch.cat(samples, dim=0)

@@ -39,7 +39,7 @@ class Sampler(nn.Module):
         raise NotImplementedError
     
     @abstractmethod
-    def _do_generate_from_expected_t(self, initial_z_t, diffusion_mask, num_denoising_steps, max_length, show_progress, device, keep_history=False):
+    def _do_generate_from_expected_t(self, initial_z_t, diffusion_mask, num_denoising_steps, add_random_tokens, max_length, show_progress, device, keep_history=False):
         raise NotImplementedError
     
     # Generate starting from a given z_t, the diffusion_mask is a tensor with the same shape as z_t of 0s and 1s, where 1 indicates that the token is NOT given and needs to be denoised
@@ -62,13 +62,13 @@ class Sampler(nn.Module):
             else:
                 return z_t
     @torch.no_grad()
-    def generate_from_expected_t(self, z_t, diffusion_mask, num_denoising_steps=128, max_length=None, decode=True, show_progress=True, keep_history=False):
+    def generate_from_expected_t(self, z_t, diffusion_mask, num_denoising_steps=128, add_random_tokens=True, max_length=None, decode=True, show_progress=True, keep_history=False):
         max_length = max_length or self.model.config.max_seq_len
         # print("getting device")
         device = next(self.model.parameters()).device
 
         # print("calling _do_generate_from_expected_t")
-        z_t, history = self._do_generate_from_expected_t(z_t, diffusion_mask=diffusion_mask, num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device, keep_history=keep_history)
+        z_t, history = self._do_generate_from_expected_t(z_t, diffusion_mask=diffusion_mask, num_denoising_steps=num_denoising_steps, add_random_tokens=add_random_tokens, max_length=max_length, show_progress=show_progress, device=device, keep_history=keep_history)
         # print("done calling _do_generate_from_expected_t")
 
         if decode:
@@ -171,7 +171,7 @@ class GiddSampler(Sampler):
         else:
             return z_t, None
     
-    def _do_generate_from_expected_t(self, initial_z_t, diffusion_mask, num_denoising_steps, max_length, show_progress, device, keep_history=False):
+    def _do_generate_from_expected_t(self, initial_z_t, diffusion_mask, num_denoising_steps, add_random_tokens, max_length, show_progress, device, keep_history=False):
         # TODO: when model was trained without diffusion_mask, how do you insert the knowledge of the given puzzle?
         # Idea: pass a modified diffusion_mask to not change anything until the denoising step is reached for which the puzzle is an expected state.
         # With uniform noise, the expected state is never k correct tokens and the rest masked, so potentially randomly unmask some non-given tokens.
@@ -197,31 +197,32 @@ class GiddSampler(Sampler):
         
         ts = ts.unsqueeze(-1)
         
-        # randomly unmask some non-given tokens from initial_z_t based on the number of given tokens
-        # -> ctN = (1 - t) / (num_given_tokens / seq_len) - 1
-        # -> fraction_random = ctN / (1 + ctN)
-        ctN = (1 - most_likely_t_discretized) / fraction_denoised - 1
-        fraction_random = ctN / (1 + ctN)
-        num_random_tokens = (fraction_random * seq_len_wo_bos_eos).to(int)
-        # print(f"fraction_denoised: {fraction_denoised},\nmost_likely_step: {most_likely_step},\nnum_random_tokens: {num_random_tokens}")
+        if add_random_tokens:
+            # randomly unmask some non-given tokens from initial_z_t based on the number of given tokens
+            # -> ctN = (1 - t) / (num_given_tokens / seq_len) - 1
+            # -> fraction_random = ctN / (1 + ctN)
+            ctN = (1 - most_likely_t_discretized) / fraction_denoised - 1
+            fraction_random = ctN / (1 + ctN)
+            num_random_tokens = (fraction_random * seq_len_wo_bos_eos).to(int)
+            # print(f"fraction_denoised: {fraction_denoised},\nmost_likely_step: {most_likely_step},\nnum_random_tokens: {num_random_tokens}")
 
-        initial_z_t_noisy = initial_z_t.clone()
-        for i in range(initial_z_t.shape[0]):
-            eligible_indices = torch.nonzero(diffusion_mask[i, 1:-1] == 0).squeeze(-1)
-            num_to_replace = min(num_random_tokens[i].item(), eligible_indices.numel())
-            if num_to_replace > 0:
-                chosen_indices = eligible_indices[torch.randperm(eligible_indices.numel())[:num_to_replace]]
-                initial_z_t_noisy[i, chosen_indices] = torch.randint(0, 9, (num_to_replace,))
-        
+            initial_z_t_noisy = initial_z_t.clone()
+            for i in range(initial_z_t.shape[0]):
+                eligible_indices = torch.nonzero(diffusion_mask[i, 1:-1] == 0).squeeze(-1)
+                num_to_replace = min(num_random_tokens[i].item(), eligible_indices.numel())
+                if num_to_replace > 0:
+                    chosen_indices = eligible_indices[torch.randperm(eligible_indices.numel())[:num_to_replace]]
+                    initial_z_t_noisy[i, chosen_indices] = torch.randint(0, 9, (num_to_replace,))
+            
+            initial_z_t_noisy = initial_z_t_noisy.to(device, non_blocking=True)
         
         initial_z_t = initial_z_t.to(device, non_blocking=True)
-        initial_z_t_noisy = initial_z_t_noisy.to(device, non_blocking=True)
         diffusion_mask = diffusion_mask.to(device, non_blocking=True)
         most_likely_step = most_likely_step.to(device, non_blocking=True)
         
-        z_t = initial_z_t_noisy.clone()
+        z_t = initial_z_t_noisy.clone() if add_random_tokens else initial_z_t.clone()
         
-        history = [initial_z_t.clone(), initial_z_t_noisy.clone()] if keep_history else None
+        history = [z_t.clone()] if keep_history else None
         
         # print("entering sampling loop in _do_generate_from_given")
         for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
