@@ -1,7 +1,10 @@
 num_denoising_steps: 50 # 128
 position_metric: max # [max, margin]
-position_sampling_strategy: all # [all, top_k, top_p, min_p]
+position_sampling_strategy: all # [all, top_k_gumbel, top_k, top_p, min_p]
 position_sampling_strategy_args:
+  top_k_gumbel:
+    k: 8
+    gumbel_noise_coefficient: 0.5
   top_k: 8
   top_p: 0.9
   min_p: 0.05

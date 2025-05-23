@@ -47,6 +47,8 @@ def get_position_sampling_strategy(config):
     match config.sampling.position_sampling_strategy:
         case "all":
             return all_positions
+        case "top_k_gumbel":
+            return partial(sample_position_top_k_gumbel, k=config.sampling.position_sampling_strategy_args.top_k_gumbel.k, gumbel_noise_coefficient=config.sampling.position_sampling_strategy_args.top_k_gumbel.gumbel_noise_coefficient)
         case "top_k":
             return partial(sample_top_k, k=config.sampling.position_sampling_strategy_args.top_k, as_mask=True)
         case "top_p":
@@ -66,12 +68,9 @@ def get_token_sampling_strategy(config):
             return partial(sample_min_p, p=config.sampling.token_sampling_strategy_args.min_p)
 
 @torch.no_grad()
-def position_metric_max(z_t, probs, diffusion_mask=None):
+def position_metric_max(z_t, probs):
     metric = torch.max(probs, dim=-1).values
-    if diffusion_mask is not None:
-        return metric * diffusion_mask
-    else:
-        return metric
+    return metric
     
     # Don't allow changing the token if the model thinks the current one is the best (this is flawed as is, because the mask token is always the best until almost the end)
     # max_indices = torch.max(probs, dim=-1).indices
@@ -85,13 +84,10 @@ def position_metric_max(z_t, probs, diffusion_mask=None):
     #     return metric
 
 @torch.no_grad()
-def position_metric_margin(z_t, probs, diffusion_mask=None):
+def position_metric_margin(z_t, probs):
     top_2 = torch.topk(probs, 2, dim=-1).values
     metric = top_2[..., 0] - top_2[..., 1]
-    if diffusion_mask is not None:
-        return metric * diffusion_mask
-    else:
-        return metric
+    return metric
     
     # Don't allow changing the token if the model thinks the current one is the best (this is flawed as is, because the mask token is always the best until almost the end)
     # max_indices = torch.max(probs, dim=-1).indices
@@ -109,6 +105,15 @@ def position_metric_margin(z_t, probs, diffusion_mask=None):
 def all_positions(metric):
     return metric != 0
 
+@torch.no_grad()
+def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0, generator=None):
+    metric_is_non_zero_mask = metric != 0
+    if gumbel_noise_coefficient > 0:
+        metric = metric + torch.distributions.gumbel.Gumbel(0, gumbel_noise_coefficient).sample(metric.shape)
+        metric = metric * metric_is_non_zero_mask
+    top_k_thresholds = torch.topk(metric, k, dim=-1).values[..., -1].unsqueeze(-1)
+    top_k_mask = metric >= top_k_thresholds
+    return top_k_mask
 
 @torch.no_grad()
 def sample_categorical(probs, generator=None):
@@ -118,19 +123,6 @@ def sample_categorical(probs, generator=None):
     cumprobs[..., -1] = 1 + 1e-4
     samples = torch.searchsorted(cumprobs, uniform, right=True).squeeze(-1)
     return samples
-
-@torch.no_grad()
-def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0, generator=None):
-    metric_is_non_zero_mask = metric != 0
-    if gumbel_noise_coefficient > 0:
-        metric = metric + torch.distributions.gumbel.Gumbel(0, gumbel_noise_coefficient).sample(metric.shape)
-        pass
-    top_k_thresholds = torch.topk(metric, k, dim=-1).values[..., -1].unsqueeze(-1)
-    top_k_mask = metric >= top_k_thresholds
-    top_k_mask = top_k_mask * metric_is_non_zero_mask
-    return top_k_mask
-    
-
 
 @torch.no_grad()
 # TODO: all_candidates=bool is only a temporary variable for testing selecting all candidates

@@ -123,12 +123,12 @@ class GiddSampler(Sampler):
             
             # print("getting metric")
             metric = self.position_metric(z_t, q_st, diffusion_mask)
-            # Assumption: position sampling strategies will never choose a position with metric = 0
+            metric = metric * diffusion_mask
             # print("getting update positions")
             update_positions = self.position_sampling_strategy(metric)
             update_positions = update_positions * diffusion_mask
             # print("getting next z_t")
-            next_z_t = self.token_sampling_strategy(q_st) # TODO: either sample at all positions (no sequential dependency) or sample only at the selected positions (less computation) (by gathering from q_st based on update_positions)
+            next_z_t = self.token_sampling_strategy(q_st)
             return torch.where(update_positions.bool(), next_z_t, z_t)
 
     def __init__(self, config, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
