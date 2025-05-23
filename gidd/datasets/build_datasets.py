@@ -36,8 +36,7 @@ def build_sudoku_dataset():
     # subsets = [extract_dataset_subset(ds, subset) for subset in subset_names]
 
 
-
-def build_sudoku_shah(parse_shah_dataset=True):
+def parse_shah_dataset():
     def parse_example(example):
         parsed_solution = np.zeros((81), dtype=int)
         parsed_puzzle = np.zeros((81), dtype=int)
@@ -49,7 +48,7 @@ def build_sudoku_shah(parse_shah_dataset=True):
             strategy = example[i + 3]
             assert strategy == 0
             parsed_solution[row * 9 + col] = val
-            parsed_puzzle[row * 9 + col] = 0
+            parsed_puzzle[row * 9 + col] = val
         for i in range(4 * num_given + 1, len(example), 4):
             row = example[i]
             col = example[i + 1]
@@ -57,36 +56,36 @@ def build_sudoku_shah(parse_shah_dataset=True):
             strategy = example[i + 3]
             assert strategy != 0
             parsed_solution[row * 9 + col] = val
-            parsed_puzzle[row * 9 + col] = val
+            parsed_puzzle[row * 9 + col] = 0
         solution_as_str = "".join([str(x) for x in parsed_solution])
         puzzle_as_str = "".join([str(x) for x in parsed_puzzle])
         return solution_as_str, puzzle_as_str
+    
+    easy_data_train = np.load("gidd/datasets/sudoku_shah/sudoku-train-data.npy", allow_pickle=False)
+    easy_data_test = np.load("gidd/datasets/sudoku_shah/sudoku-test-data.npy", allow_pickle=False)
+    easy_data_train = easy_data_train.astype(np.int32)
+    easy_data_test = easy_data_test.astype(np.int32)
 
-    def parse_shah_dataset():
-        easy_data_train = np.load("gidd/datasets/sudoku_shah/sudoku-train-data.npy", allow_pickle=False)
-        easy_data_test = np.load("gidd/datasets/sudoku_shah/sudoku-test-data.npy", allow_pickle=False)
-        easy_data_train = easy_data_train.astype(np.int32)
-        easy_data_test = easy_data_test.astype(np.int32)
+    easy_data_train_parsed = list(map(parse_example, easy_data_train))
+    easy_data_train_solutions, easy_data_train_puzzles = zip(*easy_data_train_parsed)
 
-        easy_data_train_parsed = list(map(parse_example, easy_data_train))
-        easy_data_train_solutions, easy_data_train_puzzles = zip(*easy_data_train_parsed)
+    easy_data_test_parsed = list(map(parse_example, easy_data_test))
+    easy_data_test_solutions, easy_data_test_puzzles = zip(*easy_data_test_parsed)
 
-        easy_data_test_parsed = list(map(parse_example, easy_data_test))
-        easy_data_test_solutions, easy_data_test_puzzles = zip(*easy_data_test_parsed)
+    ds_easy_train = Dataset.from_dict({'text': easy_data_train_solutions, 'puzzle': easy_data_train_puzzles})
+    ds_easy_test = Dataset.from_dict({'text': easy_data_test_solutions, 'puzzle': easy_data_test_puzzles})
 
-        ds_easy_train = Dataset.from_dict({'text': easy_data_train_solutions, 'puzzle': easy_data_train_puzzles})
-        ds_easy_test = Dataset.from_dict({'text': easy_data_test_solutions, 'puzzle': easy_data_test_puzzles})
+    ds_easy_train = ds_easy_train.map(add_diffusion_mask, batched=True)
+    ds_easy_test = ds_easy_test.map(add_diffusion_mask, batched=True)
 
-        ds_easy_train = ds_easy_train.map(add_diffusion_mask, batched=True)
-        ds_easy_test = ds_easy_test.map(add_diffusion_mask, batched=True)
+    print(ds_easy_train)
+    print(ds_easy_test)
 
-        print(ds_easy_train)
-        print(ds_easy_test)
-
-        ds_easy_train.save_to_disk(f"gidd/datasets/sudoku_shah/easy/train")
-        ds_easy_test.save_to_disk(f"gidd/datasets/sudoku_shah/easy/test")
+    ds_easy_train.save_to_disk(f"gidd/datasets/sudoku_shah/easy/train")
+    ds_easy_test.save_to_disk(f"gidd/datasets/sudoku_shah/easy/test")
 
 
+def build_sudoku_shah(parse_shah_dataset=True):
     if parse_shah_dataset:
         parse_shah_dataset()
 
@@ -119,4 +118,5 @@ def build_sudoku_shah(parse_shah_dataset=True):
 
 
 # build_sudoku_dataset()
-# build_sudoku_shah(False)
+# parse_shah_dataset()
+# build_sudoku_shah(parse_shah_dataset=False)
