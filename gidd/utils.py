@@ -109,7 +109,7 @@ def all_positions(metric):
 def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0, generator=None):
     metric_is_non_zero_mask = metric != 0
     if gumbel_noise_coefficient > 0:
-        metric = metric + torch.distributions.gumbel.Gumbel(0, gumbel_noise_coefficient).sample(metric.shape)
+        metric = metric + torch.distributions.gumbel.Gumbel(0, gumbel_noise_coefficient).sample(metric.shape).to(metric.device, dtype=metric.dtype)
         metric = metric * metric_is_non_zero_mask
     top_k_thresholds = torch.topk(metric, k, dim=-1).values[..., -1].unsqueeze(-1)
     top_k_mask = metric >= top_k_thresholds

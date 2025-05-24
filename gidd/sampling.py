@@ -122,7 +122,7 @@ class GiddSampler(Sampler):
                 q_st = q_st / q_st.sum(-1, keepdim=True)
             
             # print("getting metric")
-            metric = self.position_metric(z_t, q_st, diffusion_mask)
+            metric = self.position_metric(z_t, q_st)
             metric = metric * diffusion_mask
             # print("getting update positions")
             update_positions = self.position_sampling_strategy(metric)
