@@ -133,8 +133,28 @@ def tokenize_dataset(
 
 
 def default_collator(config, tokenizer, examples, text_key="text"):
-    examples = [x[text_key] for x in examples]
-    return tokenizer(examples, padding="max_length", truncation=True, max_length=config.model.max_seq_len, return_tensors="pt")
+    puzzle_seq_len = len(examples['puzzle'][0])
+    if config.training.use_diffusion_mask:
+        diffusion_masks = [x['diffusion_mask'] for x in examples]
+    else:
+        diffusion_masks = ['1' * puzzle_seq_len for x in examples]
+    solutions = [x[text_key] for x in examples]
+    puzzles = [x['puzzle'] for x in examples]
+    solution_tokens = tokenizer(solutions, truncation=False, return_tensors="np")
+    puzzle_tokens = tokenizer(puzzles, truncation=False, return_tensors="np")
+
+    if config.model.prompt_with_puzzle:
+        solution_ids = torch.cat([puzzle_tokens["input_ids"], solution_tokens["input_ids"]], dim=-1)
+        puzzle_ids = torch.cat([puzzle_tokens["input_ids"], puzzle_tokens["input_ids"]], dim=-1)
+        diffusion_masks = torch.cat([torch.zeros_like(puzzle_tokens["input_ids"]), torch.tensor([[int(c) for c in list(mask)] for mask in diffusion_masks])], dim=-1)
+        attention_masks = torch.cat([torch.ones_like(puzzle_tokens["attention_mask"]), solution_tokens["attention_mask"]], dim=-1)
+    else:
+        solution_ids = solution_tokens["input_ids"]
+        puzzle_ids = puzzle_tokens["input_ids"]
+        diffusion_masks = torch.tensor([[int(c) for c in list(mask)] for mask in diffusion_masks])
+        attention_masks = solution_tokens["attention_mask"]
+    
+    return BatchEncoding({"input_ids": solution_ids, "puzzle_ids": puzzle_ids, "diffusion_mask": diffusion_masks, "attention_mask": attention_masks}, tensor_type="pt", n_sequences=len(solution_ids))
 
 
 def pretokenized_collator(examples, pad_token_id=0, tokens_key="input_ids"):
@@ -146,64 +166,64 @@ def pretokenized_collator(examples, pad_token_id=0, tokens_key="input_ids"):
 
 
 def subsample_collator(config, tokenizer, examples, text_key="text"):
-    bos_token_id = tokenizer.bos_token_id or tokenizer.cls_token_id
-    eos_token_id = tokenizer.eos_token_id or tokenizer.sep_token_id
-    
+    # bos_token_id = tokenizer.bos_token_id or tokenizer.cls_token_id
+    # eos_token_id = tokenizer.eos_token_id or tokenizer.sep_token_id
+
     puzzles = [x['puzzle'] for x in examples]
     if config.training.use_diffusion_mask:
         diffusion_masks = [x['diffusion_mask'] for x in examples]
     else:
         diffusion_masks = ['1' * len(x['diffusion_mask']) for x in examples]
-    examples = [x[text_key] for x in examples]
-    tokens = tokenizer(examples, truncation=False, return_tensors="np")
+    solutions = [x[text_key] for x in examples]
+    solution_tokens = tokenizer(solutions, truncation=False, return_tensors="np")
     puzzle_tokens = tokenizer(puzzles, truncation=False, return_tensors="np")
     max_length = config.model.max_seq_len
-    input_ids = []
+    solution_ids = []
     puzzle_ids = []
     diffusion_masks_padded = []
     attn_masks = []
-    for i in range(len(examples)):
-        toks = tokens["input_ids"][i]
+    for i in range(len(solutions)):
+        solution_toks = solution_tokens["input_ids"][i]
         puzzle_toks = puzzle_tokens["input_ids"][i]
         diffusion_mask = [int(c) for c in list(diffusion_masks[i])]
-        attn_mask = tokens["attention_mask"][i]
-        if toks[0] != bos_token_id:
-            toks = np.concatenate([[bos_token_id], toks])
-            puzzle_toks = np.concatenate([[bos_token_id], puzzle_toks])
-            diffusion_mask = np.concatenate(([0], diffusion_mask))
-            attn_mask = np.concatenate([[1], attn_mask])
-        if toks[-1] != eos_token_id:
-            toks = np.concatenate([toks, [eos_token_id]])
-            puzzle_toks = np.concatenate([puzzle_toks, [eos_token_id]])
-            diffusion_mask = np.concatenate([diffusion_mask, [0]])
-            attn_mask = np.concatenate([attn_mask, [1]])
+        attn_mask = solution_tokens["attention_mask"][i]
+        # if solution_toks[0] != bos_token_id:
+        #     solution_toks = np.concatenate([[bos_token_id], solution_toks])
+        #     puzzle_toks = np.concatenate([[bos_token_id], puzzle_toks])
+        #     diffusion_mask = np.concatenate(([0], diffusion_mask))
+        #     attn_mask = np.concatenate([[1], attn_mask])
+        # if solution_toks[-1] != eos_token_id:
+        #     solution_toks = np.concatenate([solution_toks, [eos_token_id]])
+        #     puzzle_toks = np.concatenate([puzzle_toks, [eos_token_id]])
+        #     diffusion_mask = np.concatenate([diffusion_mask, [0]])
+        #     attn_mask = np.concatenate([attn_mask, [1]])
 
-        if len(toks) > max_length:
-            overflow = len(toks) - max_length
+        if len(solution_toks) > max_length:
+            overflow = len(solution_toks) - max_length
             start_idx = np.random.randint(0, overflow + config.data.max_add_padding)
-            toks = toks[start_idx : start_idx + max_length]
+            solution_toks = solution_toks[start_idx : start_idx + max_length]
             puzzle_toks = puzzle_toks[start_idx : start_idx + max_length]
             diffusion_mask = diffusion_mask[start_idx : start_idx + max_length]
             attn_mask = attn_mask[start_idx : start_idx + max_length]
-        if len(toks) < max_length:
-            underflow = max_length - len(toks)
-            toks = np.pad(toks, (0, underflow), mode="constant", constant_values=tokenizer.pad_token_id)
+        if len(solution_toks) < max_length:
+            underflow = max_length - len(solution_toks)
+            solution_toks = np.pad(solution_toks, (0, underflow), mode="constant", constant_values=tokenizer.pad_token_id)
             puzzle_toks = np.pad(puzzle_toks, (0, underflow), mode="constant", constant_values=tokenizer.pad_token_id)
             diffusion_mask = np.pad(diffusion_mask, (0, underflow), mode="constant", constant_values=0)
             attn_mask = np.pad(attn_mask, (0, underflow), mode="constant", constant_values=0)
-        assert len(toks) == max_length
+        assert len(solution_toks) == max_length
         assert len(puzzle_toks) == max_length
         assert len(diffusion_mask) == max_length
         assert len(attn_mask) == max_length
-        input_ids.append(toks)
+        solution_ids.append(solution_toks)
         puzzle_ids.append(puzzle_toks)
         diffusion_masks_padded.append(diffusion_mask)
         attn_masks.append(attn_mask)
-    input_ids = torch.from_numpy(np.array(input_ids)).to(torch.long)
+    solution_ids = torch.from_numpy(np.array(solution_ids)).to(torch.long)
     puzzle_ids = torch.from_numpy(np.array(puzzle_ids)).to(torch.long)
     diffusion_masks_padded = torch.from_numpy(np.array(diffusion_masks_padded)).to(torch.long)
     attn_masks = torch.from_numpy(np.array(attn_masks)).to(torch.int)
-    return BatchEncoding({"input_ids": input_ids, "puzzle_ids": puzzle_ids, "diffusion_mask": diffusion_masks_padded, "attention_mask": attn_masks}, tensor_type="pt", n_sequences=len(input_ids))
+    return BatchEncoding({"input_ids": solution_ids, "puzzle_ids": puzzle_ids, "diffusion_mask": diffusion_masks_padded, "attention_mask": attn_masks}, tensor_type="pt", n_sequences=len(solution_ids))
 
 
 def _get_dataloader(config, ds, shuffle, drop_last, batch_size, collate_fn):
@@ -273,7 +293,8 @@ def get_dataloaders(config, tokenizer, train_batch_size=None, eval_batch_size=No
         if config.data.sequence_packing:
             raise ValueError("Sequence packing requires pre-tokenization.")
 
-        collate_fn = functools.partial(subsample_collator, config, tokenizer, text_key="text")
+        # collate_fn = functools.partial(subsample_collator, config, tokenizer, text_key="text")
+        collate_fn = functools.partial(default_collator, config, tokenizer, text_key="text") # TODO: can set the text_key here (e.g. to "solution")
 
     train_dl = _get_dataloader(config, train_ds, shuffle=True, drop_last=True, batch_size=train_batch_size, collate_fn=collate_fn)
     test_dl = _get_dataloader(config, test_ds, shuffle=False, drop_last=False, batch_size=eval_batch_size, collate_fn=collate_fn)
