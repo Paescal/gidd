@@ -340,7 +340,10 @@ def main(config):
                             else:
                                 samples = sampler.generate_from_expected_t(puzzles_tokenized, diffusion_mask, config.sampling.num_denoising_steps, add_random_tokens=(config.model.p_uniform == 0), max_length=config.model.max_seq_len, decode=False, show_progress=False, keep_history=False)
                             # print("scoring samples")
-                            sudoku_metrics = score_sudoku(samples[:, 1:-1], diffusion_mask[:, 1:-1], solutions_tokenized[:, 1:-1], tokenizer)
+                            if config.data.padded_vocab:
+                                sudoku_metrics = score_sudoku(samples[:, 1:-1], diffusion_mask[:, 1:-1], solutions_tokenized[:, 1:-1], tokenizer)
+                            else:
+                                sudoku_metrics = score_sudoku(samples, diffusion_mask, solutions_tokenized, tokenizer)
                             # print("scoring done")
                             for k, v in sudoku_metrics.items():
                                 score_metrics[k] = score_metrics.get(k, 0) + (v.item() if isinstance(v, torch.Tensor) else v) * bs
