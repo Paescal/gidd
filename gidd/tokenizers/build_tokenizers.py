@@ -26,5 +26,5 @@ def build_sudoku_tokenizer(pad_vocab_to=0):
     fast_tokenizer.add_special_tokens({"mask_token": "0", "unk_token": "[UNK]", "pad_token": "[PAD]", "bos_token": "[BOS]", "eos_token": "[EOS]"})
     fast_tokenizer.save_pretrained(path)
 
-# build_sudoku_tokenizer()
-# build_sudoku_tokenizer(pad_vocab_to=128)
+build_sudoku_tokenizer()
+build_sudoku_tokenizer(pad_vocab_to=128)

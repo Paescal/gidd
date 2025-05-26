@@ -1,14 +1,6 @@
 {
   "added_tokens_decoder": {
     "9": {
-      "content": "[PAD]",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false,
-      "special": true
-    },
-    "10": {
       "content": "0",
       "lstrip": false,
       "normalized": false,
@@ -16,8 +8,16 @@
       "single_word": false,
       "special": true
     },
-    "11": {
+    "10": {
       "content": "[UNK]",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "11": {
+      "content": "[PAD]",
       "lstrip": false,
       "normalized": false,
       "rstrip": false,

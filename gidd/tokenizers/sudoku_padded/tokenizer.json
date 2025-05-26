@@ -5,15 +5,6 @@
   "added_tokens": [
     {
       "id": 9,
-      "content": "[PAD]",
-      "single_word": false,
-      "lstrip": false,
-      "rstrip": false,
-      "normalized": false,
-      "special": true
-    },
-    {
-      "id": 10,
       "content": "0",
       "single_word": false,
       "lstrip": false,
@@ -22,8 +13,17 @@
       "special": true
     },
     {
-      "id": 11,
+      "id": 10,
       "content": "[UNK]",
+      "single_word": false,
+      "lstrip": false,
+      "rstrip": false,
+      "normalized": false,
+      "special": true
+    },
+    {
+      "id": 11,
+      "content": "[PAD]",
       "single_word": false,
       "lstrip": false,
       "rstrip": false,
@@ -72,9 +72,9 @@
       "7": 6,
       "8": 7,
       "9": 8,
-      "[PAD]": 9,
-      "0": 10,
-      "[UNK]": 11,
+      "0": 9,
+      "[UNK]": 10,
+      "[PAD]": 11,
       "[BOS]": 12,
       "[EOS]": 13,
       "[VPAD0]": 14,
