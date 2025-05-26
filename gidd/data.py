@@ -29,6 +29,7 @@ def get_dataset(config, num_proc=32):
         ds = load_from_disk(f"/local/home/prisold/gidd/gidd/datasets/sudoku_shah/easy/train")
         ds = ds.train_test_split(test_size=test_size)
         train_ds = ds['train']
+        print(f"train dataset size: {len(train_ds)}")
         test_ds = ds['test']
         score_ds = test_ds
         
@@ -133,7 +134,7 @@ def tokenize_dataset(
 
 
 def default_collator(config, tokenizer, examples, text_key="text"):
-    puzzle_seq_len = len(examples['puzzle'][0])
+    puzzle_seq_len = len(examples[0]['puzzle'])
     if config.training.use_diffusion_mask:
         diffusion_masks = [x['diffusion_mask'] for x in examples]
     else:
@@ -151,9 +152,18 @@ def default_collator(config, tokenizer, examples, text_key="text"):
     else:
         solution_ids = solution_tokens["input_ids"]
         puzzle_ids = puzzle_tokens["input_ids"]
-        diffusion_masks = torch.tensor([[int(c) for c in list(mask)] for mask in diffusion_masks])
+        diffusion_masks = [[int(c) for c in list(mask)] for mask in diffusion_masks]
         attention_masks = solution_tokens["attention_mask"]
     
+    solution_ids = torch.from_numpy(np.array(solution_ids)).to(torch.long)
+    puzzle_ids = torch.from_numpy(np.array(puzzle_ids)).to(torch.long)
+    diffusion_masks = torch.from_numpy(np.array(diffusion_masks)).to(torch.long)
+    attention_masks = torch.from_numpy(np.array(attention_masks)).to(torch.int)
+    max_length = config.model.max_seq_len
+    assert solution_ids.shape[1] == max_length
+    assert puzzle_ids.shape[1] == max_length
+    assert diffusion_masks.shape[1] == max_length
+    assert attention_masks.shape[1] == max_length
     return BatchEncoding({"input_ids": solution_ids, "puzzle_ids": puzzle_ids, "diffusion_mask": diffusion_masks, "attention_mask": attention_masks}, tensor_type="pt", n_sequences=len(solution_ids))
 
 
