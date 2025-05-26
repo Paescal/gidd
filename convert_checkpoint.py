@@ -13,8 +13,9 @@ def main():
 
     model, noise_schedule, tokenizer, config = load_checkpoint(input_path)
 
+    vocab_size_architecturally = len(tokenizer)
     hf_config = DITConfig(
-        vocab_size=len(tokenizer),
+        vocab_size=vocab_size_architecturally,
         max_seq_len=config.model.max_seq_len,
         hidden_size=config.model.hidden_size,
         timestep_cond_dim=config.model.cond_dim,

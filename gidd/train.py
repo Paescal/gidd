@@ -155,7 +155,8 @@ def main(config):
         non_emb_params = sum(p.numel() for p in model.model.layers.parameters())
 
     # flops_per_batch = calculate_flops_per_batch(config, model, len(tokenizer), non_emb_params, method="hoffmann")
-    flops_per_batch = calculate_flops_per_batch(config, model, tokenizer.unk_token_id, non_emb_params, method="hoffmann")
+    vocab_size_architecturally = len(tokenizer)
+    flops_per_batch = calculate_flops_per_batch(config, model, vocab_size_architecturally, non_emb_params, method="hoffmann")
 
     trainable_params = sum(p.numel() for p in trainer.parameters() if p.requires_grad)
 
