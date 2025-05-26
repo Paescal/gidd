@@ -142,7 +142,7 @@ class HybridDiffusion(NoiseSchedule):
         # beta_pi_hat = (t_gamma * mask + c_t * (1 - mask)) / C_t
         probs = prs.mul(alpha_t.unsqueeze(-1))
         probs.add_((c_t / C_t).unsqueeze(-1))
-        probs[..., self.mask_id] = t_gamma / C_t
+        probs[..., self.mask_id] = t_gamma / C_t # TODO: is this correct? should the probability of the mask be set to t_gamma / C_t, or should that value be added to the probability the mask token gets from the uniform noise?
         probs[..., self.vocab_size_semantically:] = 0
         return probs.to(orig_dtype)
     

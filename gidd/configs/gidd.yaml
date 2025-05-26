@@ -12,7 +12,7 @@ defaults:
 model:
   type: diffusion
   diffusion_process: gidd
-  p_uniform: 0.0
+  p_uniform: 0.1
   t_eps: 1e-4
 
 training:
@@ -22,7 +22,8 @@ training:
   eval_batch_size: 64
   score_batch_size: 64
   # num_train_steps: 1 epoch = 1_889_993 / 64 = 29_532
-  num_train_steps: 236_256 # 236_256 # 118_128
+  # for shah: 1 epoch = 1_704_462 samples, 1_704_462 / 128 = 13_316.109
+  num_train_steps: 133_162 # 236_256 # 118_128
   lr_schedule: cosine
   warmup_steps: 10_000 #10000
   low_discrepancy_sampling: True

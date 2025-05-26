@@ -362,6 +362,8 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
       self.rounded_vocab_size = vocab_size + (128 - vocab_size % 128) % 128
     else:
       self.rounded_vocab_size = vocab_size
+    
+    # self.use_cross_attention = config.model.use_cross_attention
 
     self.vocab_embed = EmbeddingLayer(config.model.hidden_size, self.rounded_vocab_size)
     self.sigma_map = TimestepEmbedder(config.model.cond_dim)
@@ -369,6 +371,11 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
       config.model.hidden_size // config.model.n_heads,
       max_seq_len=config.model.max_seq_len,
     )
+    # self.context_encoder = nn.Sequential(
+    #   nn.Linear(config.model.hidden_size, config.model.hidden_size),
+    #   nn.SiLU(),
+    #   nn.Linear(config.model.hidden_size, config.model.hidden_size),
+    # )
 
     blocks = []
     for _ in range(config.model.n_blocks):

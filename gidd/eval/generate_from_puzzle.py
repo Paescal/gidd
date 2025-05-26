@@ -19,7 +19,7 @@ def main(config):
             examples[col] = [tokenizer.bos_token + example + tokenizer.eos_token for example in examples[col]]
         return examples
     
-    num_samples = 1
+    num_samples = 160
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.set_float32_matmul_precision('high')
@@ -49,7 +49,7 @@ def main(config):
     # solutions_tokenized = torch.tensor(tokenizer(solutions['solution'])['input_ids'])
     solutions_tokenized = torch.tensor(tokenizer(solutions['text'])['input_ids'])
     diffusion_mask = (puzzles_tokenized == tokenizer.mask_token_id).to(int)
-    print(f"diffusion_mask: {diffusion_mask}")
+    # print(f"diffusion_mask: {diffusion_mask}")
     sampler = get_sampler(ckpt_config, model, tokenizer, noise_schedule, sampling_config=config, compile_step=config.compilation.compile_torch, min_p=config.min_p)
     model.eval()
 
