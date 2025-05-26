@@ -11,7 +11,8 @@ class Loss(torch.nn.Module, ABC):
         self.config = config
         self.tokenizer = tokenizer
         self.noise_schedule = noise_schedule
-        self.vocab_size = len(tokenizer)
+        # self.vocab_size = len(tokenizer)
+        self.vocab_size = tokenizer.unk_token_id
 
     @abstractmethod
     def loss(self, logits, input_ids, diffusion_mask, attention_mask, z_t, t):
@@ -57,8 +58,8 @@ class GiddLoss(Loss):
         c_t = t_gamma.sqrt() * t1m_gamma.sqrt() * B
         c_t_prime = (gamma / 2) * (1 - 2 * t) / (t * t1m) * c_t
 
-        C_t = t_gamma + t1m_gamma + (self.vocab_size - 2) * c_t
-        C_t_prime = t_gamma_prime + t1m_gamma_prime + (self.vocab_size - 2) * c_t_prime
+        C_t = t_gamma + t1m_gamma + (self.vocab_size) * c_t
+        C_t_prime = t_gamma_prime + t1m_gamma_prime + (self.vocab_size) * c_t_prime
 
         alpha_hat = t1m_gamma - c_t
         alpha_hat_prime = t1m_gamma_prime - c_t_prime

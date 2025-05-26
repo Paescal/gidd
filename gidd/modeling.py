@@ -21,10 +21,12 @@ def get_tokenizer(config):
 
 def get_model(config, tokenizer, device=None, dtype=None):
     if config.model.type == "diffusion":
-        model = dit.DIT(config, len(tokenizer))
+        # model = dit.DIT(config, len(tokenizer))
+        model = dit.DIT(config, tokenizer.unk_token_id)
     elif config.model.type == "autoregressive":
         cfg = LlamaConfig(
-            vocab_size=len(tokenizer),
+            # vocab_size=len(tokenizer),
+            vocab_size=tokenizer.unk_token_id,
             num_hidden_layers=config.model.n_blocks,
             hidden_size=config.model.hidden_size,
             intermediate_size=4*config.model.hidden_size,

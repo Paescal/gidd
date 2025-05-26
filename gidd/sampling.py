@@ -111,7 +111,8 @@ class GiddSampler(Sampler):
             alpha_ts = alpha_t / alpha_s
             beta_pi_ts = beta_pi_t - alpha_t / alpha_s * beta_pi_s
 
-            vz_t = F.one_hot(z_t, num_classes=len(self.tokenizer))
+            # vz_t = F.one_hot(z_t, num_classes=len(self.tokenizer))
+            vz_t = F.one_hot(z_t, num_classes=self.tokenizer.unk_token_id)
             beta_pi_ts_at_zt = beta_pi_ts.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
             q_ts = (alpha_ts * vz_t + beta_pi_ts_at_zt)
 
