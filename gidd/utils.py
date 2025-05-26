@@ -108,6 +108,10 @@ def all_positions(metric):
 @torch.no_grad()
 def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0, generator=None):
     metric_is_non_zero_mask = metric != 0
+    # TODO: what exactly is top k even supposed to do? Select k elements sampled categorically without replacement from tokens which are currently masks, but with probabilities only considering tokens for the values 1-9?
+    # print(metric[0])
+    # metric = metric / torch.sum(metric, dim=-1, keepdim=True)
+    # print(f"metric shape: {metric.shape}")
     if gumbel_noise_coefficient > 0:
         metric = metric + torch.distributions.gumbel.Gumbel(0, gumbel_noise_coefficient).sample(metric.shape).to(metric.device, dtype=metric.dtype)
         metric = metric * metric_is_non_zero_mask
@@ -192,8 +196,8 @@ def sample_min_p(metric, p, as_mask=False, generator=None):
         return chosen_indices
 
 @torch.no_grad()
-def correct_cells_score(samples, solutions_tokenized):
-    correct_cells = (samples == solutions_tokenized).to(int)
+def correct_cells_score(samples_tokenized, solutions_tokenized):
+    correct_cells = (samples_tokenized == solutions_tokenized).to(int)
     return torch.sum(correct_cells, dim=-1)
 
 @torch.no_grad()
@@ -222,7 +226,6 @@ def score_sudoku(samples_tokenized, diffusion_mask, solutions_tokenized, tokeniz
         raise ValueError(f"Unexpected sequence length: {seq_len_original}, expected {seq_len + 2} or {seq_len}")
     
     num_samples = samples_tokenized.shape[0]
-    seq_len = samples_tokenized.shape[-1]
     cells_score = correct_cells_score(samples_tokenized, solutions_tokenized)
     given_cells = torch.sum((diffusion_mask == 0).to(int), dim=-1)
     filled_cells_score = cells_score - given_cells
@@ -230,14 +233,14 @@ def score_sudoku(samples_tokenized, diffusion_mask, solutions_tokenized, tokeniz
     # mean_filled_cells_score_fraction = torch.sum(filled_cells_score) / torch.sum(max_filled_cells_score)
     mean_filled_cells_score_fraction = torch.mean(filled_cells_score / max_filled_cells_score)
 
-    fully_correct_samples_fraction = torch.sum(cells_score == (seq_len)) / num_samples
+    fully_correct_samples_fraction = torch.mean(cells_score == (seq_len))
 
-    samples_decoded = np.array([tokenizer.decode(samples_tokenized[i], skip_special_tokens=False, clean_up_tokenization_spaces=False).split() for i in range(len(samples_tokenized))])
+    samples_decoded = np.array([tokenizer.decode(samples_tokenized[i], skip_special_tokens=False, clean_up_tokenization_spaces=False).split() for i in range(num_samples)])
     samples_decoded = samples_decoded.reshape((-1, sudoku_size, sudoku_size))
     set_score = [row_col_box_set_score(sample) for sample in samples_decoded]
     max_set_score = sudoku_size * sudoku_size * 3
     mean_set_score_fraction = np.mean(set_score) / max_set_score
-    valid_sudoku_fraction = np.sum(np.array(set_score) == max_set_score) / num_samples
+    valid_sudoku_fraction = np.mean(np.array(set_score) == max_set_score)
     
     return {
         "correctly_filled_cells": mean_filled_cells_score_fraction,

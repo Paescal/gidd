@@ -19,7 +19,7 @@ def main(config):
             examples[col] = [tokenizer.bos_token + example + tokenizer.eos_token for example in examples[col]]
         return examples
     
-    num_samples = 160
+    num_samples = 1
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.set_float32_matmul_precision('high')
@@ -32,18 +32,24 @@ def main(config):
     ckpt_config.training.eval_batch_size = config.batch_size
     dtype = parse_dtype(ckpt_config.training.dtype)
 
-    ds_eval = load_from_disk(f"/local/home/prisold/gidd/gidd/datasets/{ckpt_config.data.dataset_name}{('_' + ckpt_config.data.dataset_subset) if ckpt_config.data.dataset_subset else ''}/evaluate")
+    # ds_eval = load_from_disk(f"/local/home/prisold/gidd/gidd/datasets/{ckpt_config.data.dataset_name}{('_' + ckpt_config.data.dataset_subset) if ckpt_config.data.dataset_subset else ''}/evaluate")
+    ds_eval = load_from_disk(f"/local/home/prisold/gidd/gidd/datasets/sudoku_shah/easy/test")
+    # ds_eval = load_from_disk(f"/local/home/prisold/gidd/gidd/datasets/sudoku_shah/hard/test")
     ds_eval = ds_eval.select(range(num_samples))
     
     print(f"Evaluating model from {ckpt_path} on {num_samples} samples")
     
-    ds_eval = ds_eval.map(partial(add_bos_eos, cols=['puzzle', 'solution']), batched=True)
+    # ds_eval = ds_eval.map(partial(add_bos_eos, cols=['puzzle', 'solution']), batched=True)
+    # ds_eval = ds_eval.map(partial(add_bos_eos, cols=['puzzle', 'text']), batched=True)
     puzzles = ds_eval.select_columns(['puzzle'])
-    solutions = ds_eval.select_columns(['solution'])
+    # solutions = ds_eval.select_columns(['solution'])
+    solutions = ds_eval.select_columns(['text'])
 
     puzzles_tokenized = torch.tensor(tokenizer(puzzles['puzzle'])['input_ids'])
-    solutions_tokenized = torch.tensor(tokenizer(solutions['solution'])['input_ids'])
+    # solutions_tokenized = torch.tensor(tokenizer(solutions['solution'])['input_ids'])
+    solutions_tokenized = torch.tensor(tokenizer(solutions['text'])['input_ids'])
     diffusion_mask = (puzzles_tokenized == tokenizer.mask_token_id).to(int)
+    print(f"diffusion_mask: {diffusion_mask}")
     sampler = get_sampler(ckpt_config, model, tokenizer, noise_schedule, sampling_config=config, compile_step=config.compilation.compile_torch, min_p=config.min_p)
     model.eval()
 
