@@ -1,13 +1,13 @@
-position_metric: max # [max, margin]
-position_sampling_strategy: all # [all, top_k_gumbel, top_k, top_p, min_p]
+position_metric: MDM_margin # [MDM_max, MDM_margin, max, margin]
+position_sampling_strategy: top_k_gumbel # [all, top_k_gumbel, top_k, top_p, min_p]
 position_sampling_strategy_args:
   top_k_gumbel:
-    k: 8
-    gumbel_noise_coefficient: 0.5
+    k: 4
+    gumbel_noise_coefficient: 0.0
   top_k: 8
   top_p: 0.9
   min_p: 0.05
-token_sampling_strategy: categorical # [categorical, top_k, top_p, min_p]
+token_sampling_strategy: MDM_categorical # [MDM_categorical, categorical, top_k, top_p, min_p]
 token_sampling_strategy_args:
   top_k: 10
   top_p: 0.9

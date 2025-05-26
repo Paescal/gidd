@@ -36,8 +36,12 @@ def get_lr(config, lr, step):
 
 
 
-def get_position_metric(config):
+def get_position_metric(config, tokenizer):
     match config.sampling.position_metric:
+        case "MDM_max":
+            return partial(position_metric_MDM_max, tokenizer=tokenizer)
+        case "MDM_margin":
+            return partial(position_metric_MDM_margin, tokenizer=tokenizer)
         case "max":
             return position_metric_max
         case "margin":
@@ -56,8 +60,10 @@ def get_position_sampling_strategy(config):
         case "min_p":
             return partial(sample_min_p, p=config.sampling.position_sampling_strategy_args.min_p, indices_only=True, as_mask=True)
         
-def get_token_sampling_strategy(config):
+def get_token_sampling_strategy(config, tokenizer):
     match config.sampling.token_sampling_strategy:
+        case "MDM_categorical":
+            return partial(sample_token_MDM_categorical, tokenizer=tokenizer)
         case "categorical":
             return sample_categorical
         case "top_k":
@@ -66,6 +72,24 @@ def get_token_sampling_strategy(config):
             return partial(sample_top_p, p=config.sampling.token_sampling_strategy_args.top_p)
         case "min_p":
             return partial(sample_min_p, p=config.sampling.token_sampling_strategy_args.min_p)
+
+
+@torch.no_grad()
+def position_metric_MDM_max(z_t, probs, tokenizer):
+    is_mask_token = (z_t == tokenizer.mask_token_id)
+    probs = probs.clone()
+    probs[..., tokenizer.mask_token_id] = 0
+    metric = torch.max(probs, dim=-1).values
+    return metric * is_mask_token
+
+@torch.no_grad()
+def position_metric_MDM_margin(z_t, probs, tokenizer):
+    is_mask_token = (z_t == tokenizer.mask_token_id)
+    probs = probs.clone()
+    probs[..., tokenizer.mask_token_id] = 0
+    top_2 = torch.topk(probs, 2, dim=-1).values
+    metric = top_2[..., 0] - top_2[..., 1]
+    return metric * is_mask_token
 
 @torch.no_grad()
 def position_metric_max(z_t, probs):
@@ -127,6 +151,14 @@ def sample_categorical(probs, generator=None):
     cumprobs[..., -1] = 1 + 1e-4
     samples = torch.searchsorted(cumprobs, uniform, right=True).squeeze(-1)
     return samples
+
+@torch.no_grad()
+def sample_token_MDM_categorical(probs, tokenizer, generator=None):
+    probs = probs.clone()
+    probs[..., tokenizer.mask_token_id] = 0
+    probs = probs / probs.sum(-1, keepdim=True)
+    return sample_categorical(probs, generator=generator)
+
 
 @torch.no_grad()
 # TODO: all_candidates=bool is only a temporary variable for testing selecting all candidates
@@ -233,7 +265,7 @@ def score_sudoku(samples_tokenized, diffusion_mask, solutions_tokenized, tokeniz
     # mean_filled_cells_score_fraction = torch.sum(filled_cells_score) / torch.sum(max_filled_cells_score)
     mean_filled_cells_score_fraction = torch.mean(filled_cells_score / max_filled_cells_score)
 
-    fully_correct_samples_fraction = torch.mean(cells_score == (seq_len))
+    fully_correct_samples_fraction = torch.mean((cells_score == (seq_len)).float())
 
     samples_decoded = np.array([tokenizer.decode(samples_tokenized[i], skip_special_tokens=False, clean_up_tokenization_spaces=False).split() for i in range(num_samples)])
     samples_decoded = samples_decoded.reshape((-1, sudoku_size, sudoku_size))

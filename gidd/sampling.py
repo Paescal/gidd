@@ -88,15 +88,16 @@ class GiddSampler(Sampler):
             self.noise_schedule = noise_schedule
             self.tokenizer = tokenizer
             self.min_p = min_p
-            self.position_metric = get_position_metric(config)
+            self.position_metric = get_position_metric(config, tokenizer)
             self.position_sampling_strategy = get_position_sampling_strategy(config)
-            self.token_sampling_strategy = get_token_sampling_strategy(config)
+            self.token_sampling_strategy = get_token_sampling_strategy(config, tokenizer)
 
         def forward(self, z_t, t, s, diffusion_mask=None):
             # print("inside gidd denoising step")
             logits = self.model(z_t, t)
             # print("got logits from model")
-            logits[..., self.tokenizer.mask_token_id] = -1e6
+            # print(f"logits: {logits[..., self.tokenizer.mask_token_id - 1]}")
+            logits[..., self.tokenizer.mask_token_id:] = -1e6
 
             # if i > 0:
             # print("getting probs at t and s")
@@ -122,15 +123,22 @@ class GiddSampler(Sampler):
                 is_small = (q_st < self.min_p).float()
                 q_st = (1 - is_small) * q_st
                 q_st = q_st / q_st.sum(-1, keepdim=True)
-            
+            # print(f"z_t: {z_t[..., 1]}")
+            # print(f"q_s: {q_s[..., 1, :10]}")
+            # print(f"q_st: {q_st[..., 1, :10]}")
             # print("getting metric")
+            # print(f"probs of mask token: {q_st[..., self.tokenizer.mask_token_id]}")
             metric = self.position_metric(z_t, q_st)
+            # print(f"metric: {metric[..., 1]}")
             metric = metric * diffusion_mask
             # print("getting update positions")
             update_positions = self.position_sampling_strategy(metric)
             update_positions = update_positions * diffusion_mask
             # print("getting next z_t")
             next_z_t = self.token_sampling_strategy(q_st)
+            # print(f"z_t: {z_t}")
+            # print(f"update_positions: {update_positions}")
+            # print(f"next_z_t: {next_z_t}")
             return torch.where(update_positions.bool(), next_z_t, z_t)
 
     def __init__(self, config, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
