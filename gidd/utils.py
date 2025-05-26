@@ -144,11 +144,11 @@ def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0, generato
     return top_k_mask
 
 @torch.no_grad()
-def sample_categorical(probs, generator=None):
+def sample_categorical(probs, end_index=-1, generator=None):
     # return torch.distributions.Categorical(probs=probs).sample()
     uniform = torch.rand(probs.shape[:-1], dtype=probs.dtype, device=probs.device, generator=generator).unsqueeze(-1)
     cumprobs = probs.cumsum(-1)
-    cumprobs[..., -1] = 1 + 1e-4
+    cumprobs[..., end_index:] = 1 + 1e-4
     samples = torch.searchsorted(cumprobs, uniform, right=True).squeeze(-1)
     return samples
 

@@ -149,7 +149,7 @@ class HybridDiffusion(NoiseSchedule):
     def sample_zt(self, input_ids, diffusion_mask, t):
         x = F.one_hot(input_ids, num_classes=self.vocab_size_architecturally).to(dtype=t.dtype)
         probs = self.probs_at_t(x, t)
-        z_t = sample_categorical(probs)
+        z_t = sample_categorical(probs, end_index=self.vocab_size_semantically - 1)
         z_t = torch.where(diffusion_mask.to(torch.bool), z_t, input_ids)
         return z_t
     
