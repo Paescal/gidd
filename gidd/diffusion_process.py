@@ -59,7 +59,8 @@ class HybridDiffusion(NoiseSchedule):
         self.clip_noise = clip_noise
         self.p_uniform = max(np.exp(-clip_noise), p_uniform)
 
-        log_B = -np.log1p((1 - self.p_uniform) / self.p_uniform * self.vocab_size_semantically / 2)
+        # log_B = -np.log1p((1 - self.p_uniform) / self.p_uniform * self.vocab_size_semantically / 2) # TODO: why log1p?
+        log_B = -np.log((1 - self.p_uniform) / self.p_uniform * self.vocab_size_semantically / 2)
         mask = torch.zeros(self.vocab_size_architecturally)
         mask[self.mask_id] = 1
         self.register_buffer("mask", mask, persistent=False)
@@ -88,7 +89,7 @@ class HybridDiffusion(NoiseSchedule):
         t_plus = (- B + torch.sqrt(B_sq - 4 * A * C)) / (2 * A)
         # the corresponding t_minus = (- B - torch.sqrt(B_sq - 4 * A * C)) / (2 * A) does not need to be considered,
         # because it can be shown that the correct t is always t_plus for f, p_uniform in (0, 1).
-        # TODO: This might not be defined for p_uniform = 1, since it would lead to a division by zero in the calculation of a
+        # This is not defined for p_uniform = 1, since it would lead to a division by zero in the calculation of a
         return t_plus
     
     def get_alpha_betapi(self, t, eps=1e-4):
@@ -137,13 +138,15 @@ class HybridDiffusion(NoiseSchedule):
         # C_t should never be much smaller than 1, but just in case it is, we clip it to avoid numerical instability
         C_t = C_t.clip(eps)
 
-        alpha_t = (t1m_gamma - c_t) / C_t
+        # alpha_t = (t1m_gamma - c_t) / C_t # TODO: why -c_t?
+        alpha_t = (t1m_gamma) / C_t
 
         # beta_pi_hat = (t_gamma * mask + c_t * (1 - mask)) / C_t
         probs = prs.mul(alpha_t.unsqueeze(-1))
-        probs.add_((c_t / C_t).unsqueeze(-1))
-        probs[..., self.mask_id] = t_gamma / C_t # TODO: is this correct? should the probability of the mask be set to t_gamma / C_t, or should that value be added to the probability the mask token gets from the uniform noise?
-        probs[..., self.vocab_size_semantically:] = 0
+        probs.add_((c_t / C_t).unsqueeze(-1)) # This is the uniform noise
+        # probs[..., self.mask_id] = t_gamma / C_t # TODO: why set instead of add?
+        probs[..., self.mask_id] += t_gamma / C_t
+        probs[..., self.vocab_size_semantically:] = 1e-6
         return probs.to(orig_dtype)
     
     def sample_zt(self, input_ids, diffusion_mask, t):

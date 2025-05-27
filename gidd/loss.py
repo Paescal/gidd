@@ -61,7 +61,8 @@ class GiddLoss(Loss):
         C_t = t_gamma + t1m_gamma + (self.vocab_size_semantically) * c_t
         C_t_prime = t_gamma_prime + t1m_gamma_prime + (self.vocab_size_semantically) * c_t_prime
 
-        alpha_hat = t1m_gamma - c_t
+        # alpha_hat = t1m_gamma - c_t # TODO: why -c_t?
+        alpha_hat = t1m_gamma
         alpha_hat_prime = t1m_gamma_prime - c_t_prime
 
         is_mask = (z_t == self.mask_id).float()
@@ -93,6 +94,7 @@ class GiddLoss(Loss):
         alpha_ratio, elbo_weights, ws = self.get_weights(t, z_t, input_ids)
 
         logits[..., self.mask_id] = torch.finfo(dtype).min
+        logits[..., self.vocab_size_semantically:] = torch.finfo(dtype).min
 
         x = F.one_hot(input_ids, logits.shape[-1]).to(dtype)
         x_hat = logits.softmax(-1).to(dtype)  # prevent automatic upcasting
