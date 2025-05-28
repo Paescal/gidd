@@ -42,6 +42,8 @@ def get_position_metric(config, tokenizer):
             return partial(position_metric_MDM_max, tokenizer=tokenizer)
         case "MDM_margin":
             return partial(position_metric_MDM_margin, tokenizer=tokenizer)
+        case "MDM_margin_relative":
+            return partial(position_metric_MDM_margin_relative, tokenizer=tokenizer)
         case "max":
             return position_metric_max
         case "margin":
@@ -91,6 +93,15 @@ def position_metric_MDM_margin(z_t, probs, tokenizer):
     probs[..., tokenizer.mask_token_id] = 0
     top_2 = torch.topk(probs, 2, dim=-1).values
     metric = top_2[..., 0] - top_2[..., 1]
+    return metric * is_mask_token
+
+@torch.no_grad()
+def position_metric_MDM_margin_relative(z_t, probs, tokenizer):
+    is_mask_token = (z_t == tokenizer.mask_token_id)
+    probs = probs.clone()
+    probs[..., tokenizer.mask_token_id] = 0
+    top_2 = torch.topk(probs, 2, dim=-1).values
+    metric = 1 - (top_2[..., 1] / top_2[..., 0]) # (1st - 2nd) / 1st
     return metric * is_mask_token
 
 @torch.no_grad()
@@ -144,7 +155,8 @@ def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0, generato
     # metric = metric / torch.sum(metric, dim=-1, keepdim=True)
     # print(f"metric shape: {metric.shape}")
     if gumbel_noise_coefficient > 0:
-        metric = metric + torch.distributions.gumbel.Gumbel(0, gumbel_noise_coefficient).sample(metric.shape).to(metric.device, dtype=metric.dtype)
+        gumbel_noise = torch.distributions.gumbel.Gumbel(0, gumbel_noise_coefficient).sample(metric.shape).to(metric.device, dtype=metric.dtype)
+        metric = metric + gumbel_noise
         metric = metric * metric_is_non_zero_mask
     top_k_thresholds = torch.topk(metric, k, dim=-1).values[..., -1].unsqueeze(-1)
     top_k_mask = metric >= top_k_thresholds
