@@ -51,6 +51,8 @@ def get_position_sampling_strategy(config):
     match config.sampling.position_sampling_strategy:
         case "all":
             return all_positions
+        case "independent":
+            return sample_positions_independently
         case "top_k_gumbel":
             return partial(sample_position_top_k_gumbel, k=config.sampling.position_sampling_strategy_args.top_k_gumbel.k, gumbel_noise_coefficient=config.sampling.position_sampling_strategy_args.top_k_gumbel.gumbel_noise_coefficient)
         case "top_k":
@@ -128,6 +130,11 @@ def position_metric_margin(z_t, probs):
 @torch.no_grad()
 def all_positions(metric):
     return metric != 0
+
+@torch.no_grad()
+def sample_positions_independently(metric, p, generator=None):
+    return torch.rand(metric.shape, dtype=metric.dtype, device=metric.device, generator=generator) < p
+
 
 @torch.no_grad()
 def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0, generator=None):

@@ -91,6 +91,7 @@ class GiddSampler(Sampler):
             self.position_metric = get_position_metric(config, tokenizer)
             self.position_sampling_strategy = get_position_sampling_strategy(config)
             self.token_sampling_strategy = get_token_sampling_strategy(config, tokenizer)
+            self.config = config
 
         def forward(self, z_t, t, s, diffusion_mask=None):
             # print("inside gidd denoising step")
@@ -132,7 +133,10 @@ class GiddSampler(Sampler):
             # print(f"metric: {metric[..., 1]}")
             metric = metric * diffusion_mask
             # print("getting update positions")
-            update_positions = self.position_sampling_strategy(metric)
+            if self.config.sampling.position_sampling_strategy == "independent":
+                update_positions = self.position_sampling_strategy(metric, (alpha_s - alpha_t) / (1 - alpha_t))
+            else:
+                update_positions = self.position_sampling_strategy(metric)
             update_positions = update_positions * diffusion_mask
             # print("getting next z_t")
             next_z_t = self.token_sampling_strategy(q_st)
