@@ -58,12 +58,13 @@ class GiddLoss(Loss):
         c_t = t_gamma.sqrt() * t1m_gamma.sqrt() * B
         c_t_prime = (gamma / 2) * (1 - 2 * t) / (t * t1m) * c_t
 
-        C_t = t_gamma + t1m_gamma + (self.vocab_size_semantically) * c_t
-        C_t_prime = t_gamma_prime + t1m_gamma_prime + (self.vocab_size_semantically) * c_t_prime
+        C_t = t_gamma + t1m_gamma + (self.vocab_size_semantically - 1) * c_t
+        C_t_prime = t_gamma_prime + t1m_gamma_prime + (self.vocab_size_semantically - 1) * c_t_prime
 
         # alpha_hat = t1m_gamma - c_t # TODO: why -c_t?
+        # alpha_hat_prime = t1m_gamma_prime - c_t_prime
         alpha_hat = t1m_gamma
-        alpha_hat_prime = t1m_gamma_prime - c_t_prime
+        alpha_hat_prime = t1m_gamma_prime
 
         is_mask = (z_t == self.mask_id).float()
         pi_hat = t_gamma * is_mask + c_t * (1 - is_mask)
