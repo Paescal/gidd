@@ -1,7 +1,7 @@
 hidden_size: 256
 cond_dim: 128
 n_blocks: 6
-n_heads: 8
+n_heads: 4
 dropout: 0.0
 max_seq_len: 81
 prompt_with_puzzle: False
