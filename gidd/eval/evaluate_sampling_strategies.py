@@ -123,11 +123,10 @@ def main(config):
                                     with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
                                         for j in range(0, num_samples, config.batch_size):
                                             bs = min(config.batch_size, num_samples - j)
-                                            # TODO: how is the max_length in SamplerInstance.model.config.max_seq_len set? Once that is done automatically for sudoku, no need to pass it here
                                             if ckpt_config.training.use_diffusion_mask:
-                                                z_t = sampler.generate_from_given(all_puzzles_tokenized[i][j:j+bs], all_diffusion_mask[i][j:j+bs], config.num_denoising_steps, max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False, keep_history=False)
+                                                z_t = sampler.generate_from_given(all_puzzles_tokenized[i][j:j+bs], all_diffusion_mask[i][j:j+bs], config.num_denoising_steps, decode=False, show_progress=False, keep_history=False)
                                             else:
-                                                z_t = sampler.generate_from_expected_t(all_puzzles_tokenized[i][j:j+bs], all_diffusion_mask[i][j:j+bs], config.num_denoising_steps, add_random_tokens=(ckpt_config.model.p_uniform == 0), max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False, keep_history=False)
+                                                z_t = sampler.generate_from_expected_t(all_puzzles_tokenized[i][j:j+bs], all_diffusion_mask[i][j:j+bs], config.num_denoising_steps, add_random_tokens=(ckpt_config.model.p_uniform == 0), decode=False, show_progress=False, keep_history=False)
                                             samples.append(z_t)
                                             pbar.update(bs)
                                 samples = torch.cat(samples, dim=0)

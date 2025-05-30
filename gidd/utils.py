@@ -101,7 +101,7 @@ def position_metric_MDM_margin_relative(z_t, probs, tokenizer):
     probs = probs.clone()
     probs[..., tokenizer.mask_token_id] = 0
     top_2 = torch.topk(probs, 2, dim=-1).values
-    metric = 1 - (top_2[..., 1] / top_2[..., 0]) # (1st - 2nd) / 1st
+    metric = 1 - (top_2[..., 1] / top_2[..., 0]) # (1st - 2nd) / 1st = 1 - 2nd / 1st
     return metric * is_mask_token
 
 @torch.no_grad()
@@ -303,12 +303,13 @@ def score_sudoku(samples_tokenized, diffusion_mask, solutions_tokenized, tokeniz
 
 
 def calculate_flops_per_batch(config, model, vocab_size, non_emb_params=None, method="hoffmann"):
+    max_seq_len = config.model.max_seq_len * 2 if config.model.use_puzzle_conditioning else config.model.max_seq_len
     if method == "kaplan":
         assert non_emb_params is not None
-        flops_per_token = 2 * (non_emb_params + config.model.n_blocks * config.model.hidden_size * config.model.max_seq_len)
-        flops_per_sample = 3 * config.model.max_seq_len * flops_per_token
+        flops_per_token = 2 * (non_emb_params + config.model.n_blocks * config.model.hidden_size * max_seq_len)
+        flops_per_sample = 3 * max_seq_len * flops_per_token
     elif method == "hoffmann":
-        seq_len = config.model.max_seq_len
+        seq_len = max_seq_len
         d_model = config.model.hidden_size
         num_heads = config.model.n_heads
         mlp_ratio = 4

@@ -31,8 +31,7 @@ def main(args):
         with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
             for i in range(0, args.num_samples, args.batch_size):
                 bs = min(args.batch_size, args.num_samples - i)
-                # TODO: how is the max_length in SamplerInstance.model.config.max_seq_len set? Once that is done automatically for sudoku, no need to pass it here
-                z_t = sampler.generate(bs, args.num_denoising_steps, max_length=config.model.max_seq_len, decode=False, show_progress=False)
+                z_t = sampler.generate(bs, args.num_denoising_steps, decode=False, show_progress=False)
                 samples.append(z_t)
                 pbar.update(bs)
     samples = torch.cat(samples, dim=0).cpu()

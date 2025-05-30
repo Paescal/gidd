@@ -204,11 +204,10 @@ def main(config):
         with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
             for i in range(0, num_samples, config.batch_size):
                 bs = min(config.batch_size, num_samples - i)
-                # TODO: how is the max_length in SamplerInstance.model.config.max_seq_len set? Once that is done automatically for sudoku, no need to pass it here
                 if ckpt_config.training.use_diffusion_mask:
-                    z_t, history = sampler.generate_from_given(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False, keep_history=True)
+                    z_t, history = sampler.generate_from_given(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, decode=False, show_progress=False, keep_history=True)
                 else:
-                    z_t, history = sampler.generate_from_expected_t(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, add_random_tokens=(ckpt_config.model.p_uniform == 0), max_length=ckpt_config.model.max_seq_len, decode=False, show_progress=False, keep_history=True)
+                    z_t, history = sampler.generate_from_expected_t(puzzles_tokenized[i:i+bs], diffusion_mask[i:i+bs], config.num_denoising_steps, add_random_tokens=(ckpt_config.model.p_uniform == 0), decode=False, show_progress=False, keep_history=True)
                 samples.append(z_t)
                 histories.append(history)
                 pbar.update(bs)

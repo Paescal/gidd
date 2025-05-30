@@ -45,7 +45,9 @@ class Sampler(nn.Module):
     # Generate starting from a given z_t, the diffusion_mask is a tensor with the same shape as z_t of 0s and 1s, where 1 indicates that the token is NOT given and needs to be denoised
     @torch.no_grad()
     def generate_from_given(self, z_t, diffusion_mask, num_denoising_steps=128, max_length=None, decode=True, show_progress=True, keep_history=False):
-        max_length = max_length or self.model.config.max_seq_len
+        max_length = max_length or self.model.config.model.max_seq_len
+        if self.model.config.model.use_puzzle_conditioning:
+            max_length = 2 * max_length
         # print("getting device")
         device = next(self.model.parameters()).device
 

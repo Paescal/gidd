@@ -144,7 +144,7 @@ def default_collator(config, tokenizer, examples, text_key="text"):
     solution_tokens = tokenizer(solutions, truncation=False, return_tensors="np")
     puzzle_tokens = tokenizer(puzzles, truncation=False, return_tensors="np")
 
-    if config.model.prompt_with_puzzle:
+    if config.model.use_puzzle_conditioning:
         solution_ids = torch.cat([puzzle_tokens["input_ids"], solution_tokens["input_ids"]], dim=-1)
         puzzle_ids = torch.cat([puzzle_tokens["input_ids"], puzzle_tokens["input_ids"]], dim=-1)
         diffusion_masks = torch.cat([torch.zeros_like(puzzle_tokens["input_ids"]), torch.tensor([[int(c) for c in list(mask)] for mask in diffusion_masks])], dim=-1)
@@ -159,7 +159,10 @@ def default_collator(config, tokenizer, examples, text_key="text"):
     puzzle_ids = torch.from_numpy(np.array(puzzle_ids)).to(torch.long)
     diffusion_masks = torch.from_numpy(np.array(diffusion_masks)).to(torch.long)
     attention_masks = torch.from_numpy(np.array(attention_masks)).to(torch.int)
-    max_length = config.model.max_seq_len
+    if config.model.use_puzzle_conditioning:
+        max_length = config.model.max_seq_len * 2
+    else:
+        max_length = config.model.max_seq_len
     assert solution_ids.shape[1] == max_length
     assert puzzle_ids.shape[1] == max_length
     assert diffusion_masks.shape[1] == max_length
