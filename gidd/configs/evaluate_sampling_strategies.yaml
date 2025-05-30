@@ -9,9 +9,10 @@ defaults:
 # checkpoint_path: ./outputs/2025-05-17/12-00-07/checkpoints/latest/ # p_u = 0.1
 # checkpoint_path: ./outputs/2025-05-23/15-40-25/checkpoints/latest/ # p_u = 0.0
 # checkpoint_path: ./outputs/2025-05-24/11-02-09/checkpoints/latest/ # p_u = 0.1
-checkpoint_path: ./outputs/2025-05-26/17-20-34/checkpoints/latest/ # p_u = 0.0, lw=dynamic
-# checkpoint_path: ./outputs/2025-05-26/17-21-29/checkpoints/latest/ # p_u = 0.0, lw=none
+checkpoint_path:
+  - ./outputs/2025-05-26/17-20-34/checkpoints/latest/ # p_u = 0.0, lw=dynamic
+  - ./outputs/2025-05-26/17-21-29/checkpoints/latest/ # p_u = 0.0, lw=none
 # checkpoint_path: ./outputs/2025-05-27/14-50-38/checkpoints/latest/ # p_u = 0.1, lw=dynamic
 batch_size: 64
-num_denoising_steps: 50 # 90 # 50 # 128
+num_denoising_steps: 81 # 90 # 50 # 128
 min_p: 0.0
