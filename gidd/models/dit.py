@@ -125,6 +125,7 @@ def apply_rotary_pos_emb(qkv, cos, sin):
     sin = sin[0,:,0,0,:sin.shape[-1]//2]
     return flash_attn.layers.rotary.apply_rotary_emb_qkv_(qkv, cos, sin)
   else:
+    print(f"Applying rotary pos emb with shapes: qkv: {qkv.shape}, cos: {cos.shape}")
     return (qkv * cos) + (rotate_half(qkv) * sin)
 
 
@@ -316,6 +317,109 @@ class DDiTBlock(nn.Module):
       None, gate_mlp, x, self.dropout)
     return x
 
+class DDiTBlockCross(nn.Module):
+  def __init__(self, dim, n_heads, cond_dim, mlp_ratio=4, dropout=0.1):
+    super().__init__()
+    self.n_heads = n_heads
+    self.dim = dim
+    self.cond_dim = cond_dim
+    self.mlp_ratio = mlp_ratio
+
+    self.norm1 = LayerNorm(dim)
+    self.attn_qkv = nn.Linear(dim, 3 * dim, bias=False)
+    self.attn_out = nn.Linear(dim, dim, bias=False)
+    self.dropout1 = nn.Dropout(dropout)
+
+    self.norm2 = LayerNorm(dim)
+    self.mlp = nn.Sequential(
+      nn.Linear(dim, mlp_ratio * dim, bias=True),
+      nn.GELU(approximate='tanh'),
+      nn.Linear(mlp_ratio * dim, dim, bias=True))
+    self.dropout2 = nn.Dropout(dropout)
+    self.dropout = dropout
+
+    self.adaLN_modulation = nn.Linear(cond_dim, 6 * dim, bias=True)
+    self.adaLN_modulation.weight.data.zero_()
+    self.adaLN_modulation.bias.data.zero_()
+
+  def flops(self, seq_len=128):
+    per_token_flops = 0
+    per_token_flops += 2 * self.dim * 3 * self.dim  # attn_qkv
+    per_token_flops += 2 * seq_len * self.dim  # softmax attention
+    per_token_flops += 2 * self.dim * self.dim  # attn_out
+    per_token_flops += 2 * 2 * self.dim * 4 * self.dim  # mlp
+    flops = per_token_flops * seq_len
+    flops += 2 * self.cond_dim * 6 * self.dim  # adaLN_modulation
+    return flops
+
+  def _get_bias_dropout_scale(self):
+    if self.training:
+      return bias_dropout_add_scale_fused_train
+    else:
+      return bias_dropout_add_scale_fused_inference
+
+  def forward(self, x, context, rotary_cos_sin, c, seqlens=None):
+    """
+    x: (batch, seq, dim) - the input to attend (queries)
+    context: (batch, context_seq, dim) - the memory to attend to (keys/values)
+    rotary_cos_sin: (cos, sin) for queries (x)
+    c: conditioning
+    """
+    batch_size, seq_len = x.shape[0], x.shape[1]
+    context_seq_len = context.shape[1]
+
+    bias_dropout_scale_fn = self._get_bias_dropout_scale()
+
+    (shift_msa, scale_msa, gate_msa, shift_mlp,
+     scale_mlp, gate_mlp) = self.adaLN_modulation(c)[:, None].chunk(6, dim=2)
+
+    # attention operation
+    x_skip = x
+    print(f"Shape of x: {x.shape}, context shape: {context.shape}")
+    x = modulate_fused(self.norm1(x), shift_msa, scale_msa)
+    context_normed = modulate_fused(self.norm1(context), shift_msa, scale_msa)
+
+    # Compute q from x, k/v from context
+    q = self.attn_qkv(x)
+    k_v = self.attn_qkv(context_normed)
+
+    # Rearrange for multi-head
+    q = rearrange(q, 'b s (three h d) -> b s three h d', three=3, h=self.n_heads)
+    k_v = rearrange(k_v, 'b s (three h d) -> b s three h d', three=3, h=self.n_heads)
+
+    # Only use q from x, k/v from context
+    q = q[:, :, 0]  # (b, s, h, d)
+    k = k_v[:, :, 1]  # (b, context_seq, h, d)
+    v = k_v[:, :, 2]  # (b, context_seq, h, d)
+
+    # Optionally apply rotary to q (and k if needed)
+    cos, sin = rotary_cos_sin
+    print(f"Calling Cross-attention rotary")
+    q = apply_rotary_pos_emb(q, cos[:, :, 0, :, :].to(q.dtype), sin[:, :, 0, :, :].to(q.dtype))
+    # Optionally, apply rotary to k as well if needed (not always required for cross-attn)
+
+    # Transpose for attention: (b, h, s, d) and (b, h, context_seq, d)
+    q = q.transpose(1, 2)
+    k = k.transpose(1, 2)
+    v = v.transpose(1, 2)
+
+    # Cross attention
+    x = F.scaled_dot_product_attention(q, k, v)
+    x = rearrange(x, 'b h s d -> b s (h d)', b=batch_size)
+
+    x = bias_dropout_scale_fn(self.attn_out(x),
+                              None,
+                              gate_msa,
+                              x_skip,
+                              self.dropout)
+
+    # mlp operation
+    x = bias_dropout_scale_fn(
+      self.mlp(modulate_fused(
+        self.norm2(x), shift_mlp, scale_mlp)),
+      None, gate_mlp, x, self.dropout)
+    return x
+
 
 
 class EmbeddingLayer(nn.Module):
@@ -358,31 +462,43 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
     self.config = config
     self.vocab_size = vocab_size
+    self.max_seq_len = 2 * config.model.max_seq_len if config.model.use_puzzle_conditioning else config.model.max_seq_len
     if self.config.data.padded_vocab:
       self.rounded_vocab_size = vocab_size + (128 - vocab_size % 128) % 128
     else:
       self.rounded_vocab_size = vocab_size
-    
-    # self.use_cross_attention = config.model.use_cross_attention
 
     self.vocab_embed = EmbeddingLayer(config.model.hidden_size, self.rounded_vocab_size)
     self.sigma_map = TimestepEmbedder(config.model.cond_dim)
     self.rotary_emb = Rotary(
       config.model.hidden_size // config.model.n_heads,
-      max_seq_len=config.model.max_seq_len,
+      max_seq_len=self.max_seq_len,
     )
-    # self.context_encoder = nn.Sequential(
-    #   nn.Linear(config.model.hidden_size, config.model.hidden_size),
-    #   nn.SiLU(),
-    #   nn.Linear(config.model.hidden_size, config.model.hidden_size),
-    # )
+    self.rotary_emb_cross = Rotary(
+      config.model.hidden_size // config.model.n_heads,
+      max_seq_len=config.model.max_seq_len
+    )
 
     blocks = []
-    for _ in range(config.model.n_blocks):
-      blocks.append(DDiTBlock(config.model.hidden_size,
-                              config.model.n_heads,
-                              config.model.cond_dim,
-                              dropout=config.model.dropout))
+    blocks_cross = []
+    # if False:
+    if config.model.use_puzzle_conditioning:
+      for i in range(config.model.n_blocks):
+        blocks.append(DDiTBlock(config.model.hidden_size,
+                                    config.model.n_heads,
+                                    config.model.cond_dim,
+                                    dropout=config.model.dropout))
+      blocks_cross.append(DDiTBlockCross(config.model.hidden_size,
+                                    config.model.n_heads,
+                                    config.model.cond_dim,
+                                    dropout=config.model.dropout))
+      self.blocks_cross = nn.ModuleList(blocks_cross)
+    else:
+      for _ in range(config.model.n_blocks):
+        blocks.append(DDiTBlock(config.model.hidden_size,
+                                config.model.n_heads,
+                                config.model.cond_dim,
+                                dropout=config.model.dropout))
     self.blocks = nn.ModuleList(blocks)
 
     self.output_layer = DDitFinalLayer(
@@ -406,9 +522,21 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     c = F.silu(self.sigma_map(sigma))
 
     rotary_cos_sin = self.rotary_emb(x)
+    rotary_cos_sin_cross = self.rotary_emb_cross(x)
 
-    for i in range(len(self.blocks)):
-      x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None)
+    # if False:
+    if self.config.model.use_puzzle_conditioning:
+      for i in range(len(self.blocks) // 2):
+        x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None)
+      print(f"Calling forward on cross attention block with shape: {x.shape}, rotary_cos_sin shape: {rotary_cos_sin_cross[0].shape}, c shape: {c.shape}, max_seq_len: {self.config.model.max_seq_len}")
+      x = self.blocks_cross[0](x[:, -self.config.model.max_seq_len:], x[:, :-self.config.model.max_seq_len], rotary_cos_sin_cross, c, seqlens=None)
+      # TODO: cross attention block outputs a seuence of length 81, but self attention works on sequences of length 162!
+      # -> Fix!
+      for i in range(len(self.blocks) // 2, len(self.blocks)):
+        x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None)
+    else:
+      for i in range(len(self.blocks)):
+        x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None)
     x = self.output_layer(x, c)
 
     x = x.scatter_add(-1, indices.unsqueeze(-1), self.logit_bias.to(x.dtype).expand_as(x))

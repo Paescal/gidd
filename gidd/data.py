@@ -134,7 +134,7 @@ def tokenize_dataset(
 
 
 def default_collator(config, tokenizer, examples, text_key="text"):
-    puzzle_seq_len = len(examples[0]['puzzle'])
+    puzzle_seq_len = config.model.max_seq_len
     if config.training.use_diffusion_mask:
         diffusion_masks = [x['diffusion_mask'] for x in examples]
     else:
@@ -145,10 +145,12 @@ def default_collator(config, tokenizer, examples, text_key="text"):
     puzzle_tokens = tokenizer(puzzles, truncation=False, return_tensors="np")
 
     if config.model.use_puzzle_conditioning:
-        solution_ids = torch.cat([puzzle_tokens["input_ids"], solution_tokens["input_ids"]], dim=-1)
-        puzzle_ids = torch.cat([puzzle_tokens["input_ids"], puzzle_tokens["input_ids"]], dim=-1)
-        diffusion_masks = torch.cat([torch.zeros_like(puzzle_tokens["input_ids"]), torch.tensor([[int(c) for c in list(mask)] for mask in diffusion_masks])], dim=-1)
-        attention_masks = torch.cat([torch.ones_like(puzzle_tokens["attention_mask"]), solution_tokens["attention_mask"]], dim=-1)
+        # solution_ids = [np.concatenate((puzzle, solution), axis=-1) for puzzle, solution in zip(puzzle_tokens["input_ids"], solution_tokens["input_ids"])]
+        # puzzle_ids = [np.concatenate((puzzle, puzzle), axis=-1) for puzzle in puzzle_tokens["input_ids"]]
+        solution_ids = np.concatenate((puzzle_tokens["input_ids"], solution_tokens["input_ids"]), axis=-1)
+        puzzle_ids = np.concatenate((puzzle_tokens["input_ids"], puzzle_tokens["input_ids"]), axis=-1)
+        diffusion_masks = [[0 for _ in range(puzzle_seq_len)] + [int(c) for c in list(mask)] for mask in diffusion_masks]
+        attention_masks = np.concatenate((np.ones_like(puzzle_tokens["attention_mask"]), solution_tokens["attention_mask"]), axis=-1)
     else:
         solution_ids = solution_tokens["input_ids"]
         puzzle_ids = puzzle_tokens["input_ids"]

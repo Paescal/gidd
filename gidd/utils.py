@@ -176,7 +176,7 @@ def sample_token_MDM_categorical(probs, tokenizer, generator=None):
     probs = probs.clone()
     probs[..., tokenizer.mask_token_id] = 0
     probs = probs / probs.sum(-1, keepdim=True)
-    return sample_categorical(probs, generator=generator)
+    return sample_categorical(probs, end_index=tokenizer.unk_token_id - 1, generator=generator)
 
 
 @torch.no_grad()
