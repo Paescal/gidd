@@ -167,6 +167,7 @@ def main(config):
 
     if is_distributed:
         ddp_trainer = DDP(opt_trainer, device_ids=[device.index])
+        # ddp_trainer = DDP(opt_trainer, device_ids=[device.index], find_unused_parameters=True)
     else:
         ddp_trainer = opt_trainer
 
@@ -332,13 +333,12 @@ def main(config):
                             bs = score_batch["input_ids"].size(0)
 
                             score_batch = {k: v.to(device, non_blocking=True) for k, v in score_batch.items()}
-                            # TODO: this assumes the dataset is sudoku
                             puzzles_tokenized = score_batch["puzzle_ids"]
                             diffusion_mask = score_batch["diffusion_mask"]
                             solutions_tokenized = score_batch["input_ids"]
                             # print("generating samples")
                             if config.training.use_diffusion_mask:
-                                samples = sampler.generate_from_given(puzzles_tokenized, diffusion_mask, config.sampling.num_denoising_steps, decode=False, show_progress=False, keep_history=False)
+                                samples = sampler.generate_from_given(puzzles_tokenized, diffusion_mask, num_denoising_steps=config.sampling.num_denoising_steps, decode=False, show_progress=False, keep_history=False)
                             else:
                                 samples = sampler.generate_from_expected_t(puzzles_tokenized, diffusion_mask, config.sampling.num_denoising_steps, add_random_tokens=(config.model.p_uniform == 0), decode=False, show_progress=False, keep_history=False)
                             # print("scoring samples")

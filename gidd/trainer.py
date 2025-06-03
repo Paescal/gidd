@@ -35,7 +35,10 @@ class DiffusionTrainer(nn.Module):
             t = sample_t(self.config, batch_size, device=self.device)
             z_t = self.noise_schedule.sample_zt(batch["input_ids"], batch["diffusion_mask"], t)
 
-            logits = self.model(z_t, t)
+            if self.config.model.use_puzzle_conditioning:
+                logits = self.model(z_t, t, batch["puzzle_ids"])
+            else:
+                logits = self.model(z_t, t)
             loss, _, metrics = self.loss_fn.forward(
                 logits=logits,
                 input_ids=batch["input_ids"],

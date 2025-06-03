@@ -44,15 +44,16 @@ class Sampler(nn.Module):
     
     # Generate starting from a given z_t, the diffusion_mask is a tensor with the same shape as z_t of 0s and 1s, where 1 indicates that the token is NOT given and needs to be denoised
     @torch.no_grad()
-    def generate_from_given(self, z_t, diffusion_mask, num_denoising_steps=128, max_length=None, decode=True, show_progress=True, keep_history=False):
+    def generate_from_given(self, z_t, diffusion_mask, puzzle_conditioning=None, num_denoising_steps=128, max_length=None, decode=True, show_progress=True, keep_history=False):
         max_length = max_length or self.model.config.model.max_seq_len
-        if self.model.config.model.use_puzzle_conditioning:
-            max_length = 2 * max_length
         # print("getting device")
         device = next(self.model.parameters()).device
 
         # print("calling _do_generate_from_given")
-        z_t, history = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device, keep_history=keep_history)
+        if puzzle_conditioning is None:
+            z_t, history = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, puzzle_conditioning=z_t.clone(), num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device, keep_history=keep_history)
+        else:
+            z_t, history = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, puzzle_conditioning=puzzle_conditioning, num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device, keep_history=keep_history)
         # print("done calling _do_generate_from_given")
 
         if decode:
@@ -95,9 +96,9 @@ class GiddSampler(Sampler):
             self.token_sampling_strategy = get_token_sampling_strategy(config, tokenizer)
             self.config = config
 
-        def forward(self, z_t, t, s, diffusion_mask=None):
+        def forward(self, z_t, t, s, diffusion_mask=None, puzzle_conditioning=None):
             # print("inside gidd denoising step")
-            logits = self.model(z_t, t)
+            logits = self.model(z_t, t, puzzle_conditioning=puzzle_conditioning)
             # print("got logits from model")
             # print(f"logits: {logits[..., self.tokenizer.mask_token_id - 1]}")
             logits[..., self.tokenizer.mask_token_id:] = -1e6
@@ -164,7 +165,7 @@ class GiddSampler(Sampler):
             z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)]).clone()
         return z_t
     
-    def _do_generate_from_given(self, initial_z_t, diffusion_mask, num_denoising_steps, max_length, show_progress, device, keep_history=False):
+    def _do_generate_from_given(self, initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, max_length, show_progress, device, keep_history=False):
         ts = torch.linspace(0, 1, num_denoising_steps + 1, device=device).unsqueeze(-1)
         ts = (1 - 2 * self.t_eps) * ts + self.t_eps
         
@@ -178,7 +179,7 @@ class GiddSampler(Sampler):
         # print("entering sampling loop in _do_generate_from_given")
         for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
             # print(f"sampling step {i}")
-            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=diffusion_mask)
+            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=diffusion_mask, puzzle_conditioning=puzzle_conditioning)
             # print(f"sampling step {i} done")
             if keep_history:
                 history.append(z_t.clone())
