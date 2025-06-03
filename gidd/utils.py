@@ -303,7 +303,7 @@ def score_sudoku(samples_tokenized, diffusion_mask, solutions_tokenized, tokeniz
 
 
 def calculate_flops_per_batch(config, model, vocab_size, non_emb_params=None, method="hoffmann"):
-    max_seq_len = config.model.max_seq_len * 2 if config.model.use_puzzle_conditioning else config.model.max_seq_len
+    max_seq_len = config.model.max_seq_len
     if method == "kaplan":
         assert non_emb_params is not None
         flops_per_token = 2 * (non_emb_params + config.model.n_blocks * config.model.hidden_size * max_seq_len)
