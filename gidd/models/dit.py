@@ -520,7 +520,7 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
     blocks = []
     blocks_cross = []
-    if config.model.use_puzzle_conditioning == 'cross_attention':
+    if config.model.puzzle_conditioning == 'cross_attention':
       for _ in range(config.model.n_blocks):
         blocks_cross.append(DDiTBlockCross(config.model.hidden_size,
                                     config.model.n_heads,
@@ -553,7 +553,7 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
   def forward(self, indices, sigma, puzzle_conditioning=None):
     x = self.vocab_embed(indices)
-    if self.config.model.use_puzzle_conditioning == 'cross_attention':
+    if self.config.model.puzzle_conditioning == 'cross_attention':
       context = self.vocab_embed(puzzle_conditioning)
     c = F.silu(self.sigma_map(sigma))
 
@@ -562,7 +562,7 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     #   rotary_cos_sin_context = self.rotary_emb_cross(context)
 
     # if False:
-    if self.config.model.use_puzzle_conditioning == 'cross_attention':
+    if self.config.model.puzzle_conditioning == 'cross_attention':
       for i in range(len(self.blocks_cross)):
         x = self.blocks_cross[i](x, context, rotary_cos_sin, c, seqlens=None)
     else:

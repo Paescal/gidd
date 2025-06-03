@@ -12,9 +12,9 @@ defaults:
 model:
   type: diffusion
   diffusion_process: gidd
-  p_uniform: 0.0
+  p_uniform: 0.1
   t_eps: 1e-4
-  use_puzzle_conditioning: True
+  puzzle_conditioning: cross_attention # [none, cross_attention, in_context]
 
 training:
   resume: null
@@ -24,7 +24,7 @@ training:
   score_batch_size: 64
   # num_train_steps: 1 epoch = 1_889_993 / 64 = 29_532
   # for shah: 1 epoch = 1_704_462 samples, 1_704_462 / 128 = 13_316.109
-  num_train_steps: 1 # 236_256 # 118_128
+  num_train_steps: 134_000 # 236_256 # 118_128
   lr_schedule: cosine
   warmup_steps: 10_000 #10000
   low_discrepancy_sampling: True
@@ -33,7 +33,7 @@ training:
 
 loss:
   loss_type: gidd
-  loss_weighting: dynamic  # [dynamic, clip, none]
+  loss_weighting: none  # [dynamic, clip, none]
   min_loss_weight: 0.0
   max_loss_weight: 1.0
   loss_scale: 1.0

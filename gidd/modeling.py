@@ -15,7 +15,7 @@ def get_tokenizer(config):
         tokenizer.add_special_tokens({"pad_token": "[PAD]"})
     if tokenizer.mask_token_id is None:
         tokenizer.add_special_tokens({"mask_token": "[MASK]"})
-    if config.model.use_puzzle_conditioning == 'cross_attention':
+    if config.model.puzzle_conditioning == 'cross_attention':
         tokenizer.model_max_length = config.model.max_seq_len
     else:
         tokenizer.model_max_length = config.model.max_seq_len
