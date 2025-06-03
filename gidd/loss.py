@@ -71,7 +71,7 @@ class GiddLoss(Loss):
             loss_weights.clip_(self.min_loss_weight, self.max_loss_weight)
         elif self.loss_weighting == "dynamic":
             log_snr = torch.sigmoid(-t).clip(-20, 20)  # not exactly the log-SNR, but close enough if C_t is close to 1
-            x_scale = B / self.vocab_size * torch.exp(gamma / 2 * log_snr)
+            x_scale = B / self.vocab_size_semantically * torch.exp(gamma / 2 * log_snr)
             loss_weights = (1 - is_x) * ((1 - is_mask) + 2 * is_mask) + is_x * x_scale
             loss_weights.clip_(self.min_loss_weight, self.max_loss_weight)
 
