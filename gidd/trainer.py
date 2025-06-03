@@ -35,7 +35,7 @@ class DiffusionTrainer(nn.Module):
             t = sample_t(self.config, batch_size, device=self.device)
             z_t = self.noise_schedule.sample_zt(batch["input_ids"], batch["diffusion_mask"], t)
 
-            if self.config.model.use_puzzle_conditioning == "cross_attention":
+            if self.config.model.puzzle_conditioning == "cross_attention":
                 logits = self.model(z_t, t, batch["puzzle_ids"])
             else:
                 logits = self.model(z_t, t)
