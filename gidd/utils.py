@@ -66,6 +66,8 @@ def get_position_sampling_strategy(config):
         
 def get_token_sampling_strategy(config, tokenizer):
     match config.sampling.token_sampling_strategy:
+        case "MDM_max":
+            return partial(sample_token_MDM_max, tokenizer=tokenizer)
         case "MDM_categorical":
             return partial(sample_token_MDM_categorical, tokenizer=tokenizer)
         case "categorical":
@@ -170,6 +172,12 @@ def sample_categorical(probs, end_index=-1, generator=None):
     cumprobs[..., end_index:] = 1 + 1e-4
     samples = torch.searchsorted(cumprobs, uniform, right=True).squeeze(-1)
     return samples
+
+@torch.no_grad()
+def sample_token_MDM_max(probs, tokenizer, generator=None):
+    probs = probs.clone()
+    probs[..., tokenizer.mask_token_id] = 0
+    return torch.argmax(probs, dim=-1)
 
 @torch.no_grad()
 def sample_token_MDM_categorical(probs, tokenizer, generator=None):
