@@ -1,7 +1,7 @@
 run_name: null
 num_eval_batches: 128
 num_score_batches: 4
-log_freq: 10
+log_freq: 50
 eval_freq: 2000
 score_freq: 2000
 save_freq: 2000
