@@ -508,19 +508,25 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
     self.vocab_embed = EmbeddingLayer(config.model.hidden_size, self.rounded_vocab_size)
     self.sigma_map = TimestepEmbedder(config.model.cond_dim)
+    try:
+      max_seq_len = 2 * config.model.max_seq_len if config.model.puzzle_conditioning == 'in_context' else config.model.max_seq_len
+    except omegaconf.errors.ConfigAttributeError:
+      max_seq_len = config.model.max_seq_len
     self.rotary_emb = Rotary(
       config.model.hidden_size // config.model.n_heads,
-      max_seq_len=config.model.max_seq_len,
+      max_seq_len=max_seq_len,
     )
-    # if self.config.model.use_puzzle_conditioning:
-    #   self.rotary_emb_cross = Rotary(
-    #     config.model.hidden_size // config.model.n_heads,
-    #     max_seq_len=config.model.max_seq_len
-    #   )
 
     blocks = []
     blocks_cross = []
-    if config.model.puzzle_conditioning == 'cross_attention':
+    try:
+      using_cross_attention = config.model.puzzle_conditioning == 'cross_attention'
+    except omegaconf.errors.ConfigAttributeError:
+      try:
+        using_cross_attention = config.model.use_puzzle_conditioning
+      except omegaconf.errors.ConfigAttributeError:
+        using_cross_attention = False
+    if using_cross_attention:
       for _ in range(config.model.n_blocks):
         blocks_cross.append(DDiTBlockCross(config.model.hidden_size,
                                     config.model.n_heads,
@@ -553,7 +559,14 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
 
   def forward(self, indices, sigma, puzzle_conditioning=None):
     x = self.vocab_embed(indices)
-    if self.config.model.puzzle_conditioning == 'cross_attention':
+    try:
+      using_cross_attention = self.config.model.puzzle_conditioning == 'cross_attention'
+    except omegaconf.errors.ConfigAttributeError:
+      try:
+        using_cross_attention = self.config.model.use_puzzle_conditioning
+      except omegaconf.errors.ConfigAttributeError:
+        using_cross_attention = False
+    if using_cross_attention:
       context = self.vocab_embed(puzzle_conditioning)
     c = F.silu(self.sigma_map(sigma))
 
@@ -562,7 +575,14 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     #   rotary_cos_sin_context = self.rotary_emb_cross(context)
 
     # if False:
-    if self.config.model.puzzle_conditioning == 'cross_attention':
+    try:
+      using_cross_attention = self.config.model.puzzle_conditioning == 'cross_attention'
+    except omegaconf.errors.ConfigAttributeError:
+      try:
+        using_cross_attention = self.config.model.use_puzzle_conditioning
+      except omegaconf.errors.ConfigAttributeError:
+        using_cross_attention = False
+    if using_cross_attention:
       for i in range(len(self.blocks_cross)):
         x = self.blocks_cross[i](x, context, rotary_cos_sin, c, seqlens=None)
     else:
