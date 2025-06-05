@@ -1,0 +1,16 @@
+num_denoising_steps,model,dataset,position_metric,position_strategy,token_strategy,k,gumbel
+81,2025-06-01/17-31-45,easy,MDM_max,all,categorical,1,0
+256,2025-06-01/17-31-45,easy,MDM_max,all,categorical,1,0
+81,2025-06-01/17-31-45,easy,MDM_max,top_k_gumbel,MDM_max,1,0
+81,2025-06-01/17-31-45,easy,MDM_max,top_k_gumbel,MDM_categorical,1,0
+81,2025-06-01/17-31-45,easy,MDM_max,top_k_gumbel,MDM_max,1,0.5
+81,2025-06-01/17-31-45,easy,MDM_margin,top_k_gumbel,MDM_max,1,0
+81,2025-06-01/17-31-45,easy,MDM_margin,top_k_gumbel,MDM_categorical,1,0
+81,2025-06-01/17-31-45,easy,MDM_margin,top_k_gumbel,MDM_max,1,0.5
+81,2025-06-01/17-31-45,hard,MDM_max,all,categorical,1,0
+81,2025-06-01/17-31-45,hard,MDM_max,top_k_gumbel,MDM_max,1,0
+81,2025-06-01/17-31-45,hard,MDM_max,top_k_gumbel,MDM_categorical,1,0
+81,2025-06-01/17-31-45,hard,MDM_max,top_k_gumbel,MDM_max,1,0.5
+81,2025-06-01/17-31-45,hard,MDM_margin,top_k_gumbel,MDM_max,1,0
+81,2025-06-01/17-31-45,hard,MDM_margin,top_k_gumbel,MDM_categorical,1,0
+81,2025-06-01/17-31-45,hard,MDM_margin,top_k_gumbel,MDM_max,1,0.5
