@@ -6,6 +6,7 @@ import shutil
 from typing import Callable
 
 import numpy as np
+import omegaconf
 import torch
 import hydra
 from transformers import BatchEncoding, PreTrainedTokenizer
@@ -144,25 +145,33 @@ def default_collator(config, tokenizer, examples, text_key="text"):
     solution_tokens = tokenizer(solutions, truncation=False, return_tensors="np")
     puzzle_tokens = tokenizer(puzzles, truncation=False, return_tensors="np")
 
-    # if config.model.use_puzzle_conditioning:
-    #     solution_ids = np.concatenate((puzzle_tokens["input_ids"], solution_tokens["input_ids"]), axis=-1)
-    #     puzzle_ids = np.concatenate((puzzle_tokens["input_ids"], puzzle_tokens["input_ids"]), axis=-1)
-    #     diffusion_masks = [[0 for _ in range(puzzle_seq_len)] + [int(c) for c in list(mask)] for mask in diffusion_masks]
-    #     attention_masks = np.concatenate((np.ones_like(puzzle_tokens["attention_mask"]), solution_tokens["attention_mask"]), axis=-1)
-    # else:
-    solution_ids = solution_tokens["input_ids"]
-    puzzle_ids = puzzle_tokens["input_ids"]
-    diffusion_masks = [[int(c) for c in list(mask)] for mask in diffusion_masks]
-    attention_masks = solution_tokens["attention_mask"]
+    try:
+        use_in_context = config.model.puzzle_conditioning == 'in_context'
+    except omegaconf.errors.ConfigAttributeError:
+        use_in_context = False
+    if use_in_context:
+        solution_ids = np.concatenate((puzzle_tokens["input_ids"], solution_tokens["input_ids"]), axis=-1)
+        puzzle_ids = np.concatenate((puzzle_tokens["input_ids"], puzzle_tokens["input_ids"]), axis=-1)
+        diffusion_masks = [[0 for _ in range(puzzle_seq_len)] + [int(c) for c in list(mask)] for mask in diffusion_masks]
+        attention_masks = np.concatenate((np.ones_like(puzzle_tokens["attention_mask"]), solution_tokens["attention_mask"]), axis=-1)
+    else:
+        solution_ids = solution_tokens["input_ids"]
+        puzzle_ids = puzzle_tokens["input_ids"]
+        diffusion_masks = [[int(c) for c in list(mask)] for mask in diffusion_masks]
+        attention_masks = solution_tokens["attention_mask"]
     
     solution_ids = torch.from_numpy(np.array(solution_ids)).to(torch.long)
     puzzle_ids = torch.from_numpy(np.array(puzzle_ids)).to(torch.long)
     diffusion_masks = torch.from_numpy(np.array(diffusion_masks)).to(torch.long)
     attention_masks = torch.from_numpy(np.array(attention_masks)).to(torch.int)
-    # if config.model.use_puzzle_conditioning:
-    #     max_length = config.model.max_seq_len * 2
-    # else:
-    max_length = config.model.max_seq_len
+    try:
+        use_in_context = config.model.puzzle_conditioning == 'in_context'
+    except omegaconf.errors.ConfigAttributeError:
+        use_in_context = False
+    if use_in_context:
+        max_length = config.model.max_seq_len * 2
+    else:
+        max_length = config.model.max_seq_len
     assert solution_ids.shape[1] == max_length
     assert puzzle_ids.shape[1] == max_length
     assert diffusion_masks.shape[1] == max_length
@@ -239,7 +248,7 @@ def subsample_collator(config, tokenizer, examples, text_key="text"):
     return BatchEncoding({"input_ids": solution_ids, "puzzle_ids": puzzle_ids, "diffusion_mask": diffusion_masks_padded, "attention_mask": attn_masks}, tensor_type="pt", n_sequences=len(solution_ids))
 
 
-def _get_dataloader(config, ds, shuffle, drop_last, batch_size, collate_fn):
+def _get_dataloader(config, ds, shuffle, drop_last, batch_size, collate_fn, persistent_workers=True):
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         sampler = DistributedSampler(ds, seed=config.training.seed, shuffle=shuffle)
         _shuffle = False
@@ -256,7 +265,7 @@ def _get_dataloader(config, ds, shuffle, drop_last, batch_size, collate_fn):
         num_workers=config.data.num_workers,
         shuffle=_shuffle,
         pin_memory=True,
-        persistent_workers=True,
+        persistent_workers=persistent_workers,
     )
 
 

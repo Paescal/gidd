@@ -54,6 +54,7 @@ def load_checkpoint(path, device=None):
     model_state_dict = torch.load(Path(path, "model.pt"), map_location="cpu", weights_only=True)
     model = get_model(config, tokenizer, device="cpu")
     model.load_state_dict(model_state_dict)
+    # model.load_state_dict(model_state_dict, strict=False)
     if device is not None:
         model.to(device)
 

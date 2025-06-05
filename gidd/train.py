@@ -342,10 +342,10 @@ def main(config):
                             else:
                                 samples = sampler.generate_from_expected_t(puzzles_tokenized, diffusion_mask, config.sampling.num_denoising_steps, add_random_tokens=(config.model.p_uniform == 0), decode=False, show_progress=False, keep_history=False)
                             # print("scoring samples")
-                            # if config.model.puzzle_conditioning == 'cross_attention':
-                            #     samples = samples[..., -config.model.max_seq_len:]
-                            #     diffusion_mask = diffusion_mask[..., -config.model.max_seq_len:]
-                            #     solutions_tokenized = solutions_tokenized[..., -config.model.max_seq_len:]
+                            if config.model.puzzle_conditioning == 'in_context':
+                                samples = samples[..., -config.model.max_seq_len:]
+                                diffusion_mask = diffusion_mask[..., -config.model.max_seq_len:]
+                                solutions_tokenized = solutions_tokenized[..., -config.model.max_seq_len:]
                             sudoku_metrics = score_sudoku(samples, diffusion_mask, solutions_tokenized, tokenizer)
                             # print("scoring done")
                             for k, v in sudoku_metrics.items():

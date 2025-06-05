@@ -12,9 +12,9 @@ defaults:
 model:
   type: diffusion
   diffusion_process: gidd
-  p_uniform: 0.1
+  p_uniform: 0.2
   t_eps: 1e-4
-  puzzle_conditioning: cross_attention # [none, cross_attention, in_context]
+  puzzle_conditioning: in_context # [none, cross_attention, in_context]
 
 training:
   resume: null
