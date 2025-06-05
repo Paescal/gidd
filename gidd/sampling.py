@@ -102,37 +102,41 @@ class GiddSampler(Sampler):
             # print("got logits from model")
             # print(f"logits: {logits[..., self.tokenizer.mask_token_id - 1]}")
             logits[..., self.tokenizer.mask_token_id:] = -1e6
+            probs = logits.softmax(-1)
 
-            # if i > 0:
-            # print("getting probs at t and s")
-            q_s = self.noise_schedule.probs_at_t(logits.softmax(-1), s)
-            q_t = self.noise_schedule.probs_at_t(logits.softmax(-1), t)
-            q_zt = q_t.gather(-1, z_t.unsqueeze(-1))
+            if self.config.sampling.position_sampling_strategy == "all":
 
-            # print("getting alpha and beta pi at t and s")
-            alpha_t, beta_pi_t = self.noise_schedule.get_alpha_betapi(t)
-            alpha_s, beta_pi_s = self.noise_schedule.get_alpha_betapi(s)
+                # if i > 0:
+                # print("getting probs at t and s")
+                q_s = self.noise_schedule.probs_at_t(probs, s)
+                q_t = self.noise_schedule.probs_at_t(probs, t)
+                q_zt = q_t.gather(-1, z_t.unsqueeze(-1))
 
-            alpha_ts = alpha_t / alpha_s
-            beta_pi_ts = beta_pi_t - alpha_t / alpha_s * beta_pi_s
+                # print("getting alpha and beta pi at t and s")
+                alpha_t, beta_pi_t = self.noise_schedule.get_alpha_betapi(t)
+                alpha_s, beta_pi_s = self.noise_schedule.get_alpha_betapi(s)
 
-            # vz_t = F.one_hot(z_t, num_classes=len(self.tokenizer))
-            vocab_size_architecturally = len(self.tokenizer)
-            vz_t = F.one_hot(z_t, num_classes=vocab_size_architecturally)
-            beta_pi_ts_at_zt = beta_pi_ts.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
-            q_ts = (alpha_ts * vz_t + beta_pi_ts_at_zt)
+                alpha_ts = alpha_t / alpha_s
+                beta_pi_ts = beta_pi_t - alpha_t / alpha_s * beta_pi_s
 
-            q_st = q_ts * q_s / q_zt
-            if self.min_p > 0.0:
-                is_small = (q_st < self.min_p).float()
-                q_st = (1 - is_small) * q_st
-                q_st = q_st / q_st.sum(-1, keepdim=True)
+                # vz_t = F.one_hot(z_t, num_classes=len(self.tokenizer))
+                vocab_size_architecturally = len(self.tokenizer)
+                vz_t = F.one_hot(z_t, num_classes=vocab_size_architecturally)
+                beta_pi_ts_at_zt = beta_pi_ts.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
+                q_ts = (alpha_ts * vz_t + beta_pi_ts_at_zt)
+
+                q_st = q_ts * q_s / q_zt
+                if self.min_p > 0.0:
+                    is_small = (q_st < self.min_p).float()
+                    q_st = (1 - is_small) * q_st
+                    q_st = q_st / q_st.sum(-1, keepdim=True)
+                probs = q_st
             # print(f"z_t: {z_t[..., 1]}")
             # print(f"q_s: {q_s[..., 1, :10]}")
             # print(f"q_st: {q_st[..., 1, :10]}")
             # print("getting metric")
             # print(f"probs of mask token: {q_st[..., self.tokenizer.mask_token_id]}")
-            metric = self.position_metric(z_t, q_st)
+            metric = self.position_metric(z_t, probs)
             # print(f"metric: {metric[..., 1]}")
             metric = metric * diffusion_mask
             # print("getting update positions")
@@ -142,7 +146,7 @@ class GiddSampler(Sampler):
                 update_positions = self.position_sampling_strategy(metric)
             update_positions = update_positions * diffusion_mask
             # print("getting next z_t")
-            next_z_t = self.token_sampling_strategy(q_st)
+            next_z_t = self.token_sampling_strategy(probs)
             # print(f"z_t: {z_t}")
             # print(f"update_positions: {update_positions}")
             # print(f"next_z_t: {next_z_t}")
