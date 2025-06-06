@@ -104,7 +104,7 @@ class GiddSampler(Sampler):
             logits[..., self.tokenizer.mask_token_id:] = -1e6
             probs = logits.softmax(-1)
 
-            if self.config.sampling.position_sampling_strategy == "all":
+            if self.config.sampling.position_sampling_strategy == "all" or self.config.sampling.position_sampling_strategy == "independent":
 
                 # if i > 0:
                 # print("getting probs at t and s")
@@ -130,7 +130,8 @@ class GiddSampler(Sampler):
                     is_small = (q_st < self.min_p).float()
                     q_st = (1 - is_small) * q_st
                     q_st = q_st / q_st.sum(-1, keepdim=True)
-                probs = q_st
+                if self.config.sampling.position_sampling_strategy == "all":
+                    probs = q_st
             # print(f"z_t: {z_t[..., 1]}")
             # print(f"q_s: {q_s[..., 1, :10]}")
             # print(f"q_st: {q_st[..., 1, :10]}")

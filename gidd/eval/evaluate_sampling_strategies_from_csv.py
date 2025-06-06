@@ -22,19 +22,14 @@ def dict_to_namespace(d):
     else:
         return d
 
-@hydra.main(config_path="../configs", config_name="evaluate_sampling_strategies", version_base="1.1")
+@hydra.main(config_path="../configs", config_name="evaluate_sampling_strategies_from_csv", version_base="1.1")
 def main(config):
-# args pass batch size, ckpt_path, num_denoising_steps and min_p
-
-    num_samples = 6400
-
+# args pass batch size, min_p, torch compile flag, input_path and output_path
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.set_float32_matmul_precision('high')
     torch.set_grad_enabled(False)
 
-    input_dir = hydra.utils.to_absolute_path("./gidd/configs/sampling/")
-    os.makedirs(input_dir, exist_ok=True)
-    strategies_path = os.path.join(input_dir, "strategies.csv")
+    strategies_path = hydra.utils.to_absolute_path(config.input_path)
     strategies = []
     metrics = []
     models = {}
@@ -74,6 +69,7 @@ def main(config):
             data_loader = _get_dataloader(ckpt_config, ds, shuffle=False, drop_last=False, batch_size=config.batch_size, collate_fn=partial(default_collator, ckpt_config, tokenizer, text_key="text"), persistent_workers=False)
 
             strategies.append({
+                'num_samples': int(row['num_samples']),
                 'num_denoising_steps': int(row['num_denoising_steps']),
                 'model': model_id,
                 'dataset': ds_name,
@@ -111,16 +107,25 @@ def main(config):
             samples = []
             data_loader = strategy['data_loader']
             strategy_metrics = {}
-            with tqdm.tqdm(total=num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
+            with tqdm.tqdm(total=strategy['num_samples'], desc="Sampling", dynamic_ncols=True) as pbar:
                 with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
                     data_loader = iter(data_loader)
-                    for i in range(0, num_samples, config.batch_size):
+                    for i in range(0, strategy['num_samples'], config.batch_size):
                         batch = next(data_loader)
-                        bs = min(config.batch_size, num_samples - i)
+                        bs = min(config.batch_size, strategy['num_samples'] - i)
                         batch = batch[:bs]
+                        diffusion_mask = batch['diffusion_mask']
+                        solutions_tokenized = batch['input_ids']
                         if ckpt_config.training.use_diffusion_mask:
-                            z_t = sampler.generate_from_given(batch['puzzle_ids'], batch['diffusion_mask'], num_denoising_steps=strategy['num_denoising_steps'], decode=False, show_progress=False, keep_history=False)
-                        batch_metrics = score_sudoku(z_t.cpu(), batch['diffusion_mask'], batch['input_ids'], tokenizer)
+                            samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, num_denoising_steps=strategy['num_denoising_steps'], decode=False, show_progress=False, keep_history=False)
+                        try:
+                            if ckpt_config.model.puzzle_conditioning == 'in_context':
+                                    samples = samples[..., -ckpt_config.model.max_seq_len:]
+                                    diffusion_mask = diffusion_mask[..., -ckpt_config.model.max_seq_len:]
+                                    solutions_tokenized = solutions_tokenized[..., -ckpt_config.model.max_seq_len:]
+                        except:
+                            pass
+                        batch_metrics = score_sudoku(samples.cpu(), diffusion_mask, solutions_tokenized, tokenizer)
                         for k, v in batch_metrics.items():
                             strategy_metrics[k] = strategy_metrics.get(k, 0) + v * bs
                         pbar.update(bs)
@@ -128,17 +133,18 @@ def main(config):
             metrics.append(strategy_metrics)
             strategy_pbar.update(1)
     
-    output_dir = hydra.utils.to_absolute_path("./outputs/evaluation_logs")
+    output_path = hydra.utils.to_absolute_path(config.output_path)
+    output_dir = os.path.dirname(output_path)
     os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f"latest_{num_samples}.csv")
     with open(output_path, "w", newline="") as out_file:
-        fieldnames = ['accuracy', 'num_denoising_steps', 'model', 'dataset', 'position_metric', 'position_strategy', 'token_strategy', 'k', 'gumbel']
+        fieldnames = ['accuracy', 'num_samples', 'num_denoising_steps', 'model', 'dataset', 'position_metric', 'position_strategy', 'token_strategy', 'k', 'gumbel']
         writer = csv.DictWriter(out_file, fieldnames=fieldnames)
         writer.writeheader()
         for i, strategy in enumerate(strategies):
             strategy_metrics = metrics[i]
             row = {
-                'accuracy': strategy_metrics['correct_solution'].item() / num_samples,
+                'accuracy': f"{(strategy_metrics['correct_solution'].item() / strategy['num_samples']):.4f}",
+                'num_samples': strategy['num_samples'],
                 'num_denoising_steps': strategy['num_denoising_steps'],
                 'model': strategy['model'],
                 'dataset': strategy['dataset'],

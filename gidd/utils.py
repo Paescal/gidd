@@ -48,6 +48,8 @@ def get_position_metric(config, tokenizer):
             return position_metric_max
         case "margin":
             return position_metric_margin
+        case _:
+            raise ValueError(f"Unknown position metric: {config.sampling.position_metric}")
 
 def get_position_sampling_strategy(config):
     match config.sampling.position_sampling_strategy:
@@ -63,6 +65,8 @@ def get_position_sampling_strategy(config):
             return partial(sample_top_p, p=config.sampling.position_sampling_strategy_args.top_p, normalize_input=True, as_mask=True)
         case "min_p":
             return partial(sample_min_p, p=config.sampling.position_sampling_strategy_args.min_p, indices_only=True, as_mask=True)
+        case _:
+            raise ValueError(f"Unknown position sampling strategy: {config.sampling.position_sampling_strategy}")
         
 def get_token_sampling_strategy(config, tokenizer):
     match config.sampling.token_sampling_strategy:
@@ -78,6 +82,8 @@ def get_token_sampling_strategy(config, tokenizer):
             return partial(sample_top_p, p=config.sampling.token_sampling_strategy_args.top_p)
         case "min_p":
             return partial(sample_min_p, p=config.sampling.token_sampling_strategy_args.min_p)
+        case _:
+            raise ValueError(f"Unknown token sampling strategy: {config.sampling.token_sampling_strategy}")
 
 
 @torch.no_grad()
