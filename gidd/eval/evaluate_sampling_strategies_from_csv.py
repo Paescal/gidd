@@ -132,7 +132,7 @@ def main(config):
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, f"latest_{num_samples}.csv")
     with open(output_path, "w", newline="") as out_file:
-        fieldnames = ['accuracy', 'model', 'dataset', 'position_metric', 'position_strategy', 'token_strategy', 'k', 'gumbel']
+        fieldnames = ['accuracy', 'num_denoising_steps', 'model', 'dataset', 'position_metric', 'position_strategy', 'token_strategy', 'k', 'gumbel']
         writer = csv.DictWriter(out_file, fieldnames=fieldnames)
         writer.writeheader()
         for i, strategy in enumerate(strategies):
