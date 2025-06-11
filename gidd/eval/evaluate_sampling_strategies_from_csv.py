@@ -66,7 +66,7 @@ def main(config):
             else:
                 ds = datasets[ds_name]
             
-            data_loader = _get_dataloader(ckpt_config, ds, shuffle=False, drop_last=False, batch_size=config.batch_size, collate_fn=partial(default_collator, ckpt_config, tokenizer, text_key="text"), persistent_workers=False)
+            data_loader = _get_dataloader(ckpt_config, ds, shuffle=config.shuffle_ds, drop_last=False, batch_size=config.batch_size, collate_fn=partial(default_collator, ckpt_config, tokenizer, text_key="text"), persistent_workers=False)
 
             strategies.append({
                 'num_samples': int(row['num_samples']),
