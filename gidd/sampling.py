@@ -264,50 +264,66 @@ class GiddSampler(Sampler):
 
 class MDLMSampler(Sampler):
     class DenoisingStep(nn.Module):
-        def __init__(self, model, noise_schedule, mask_id, min_p=0.0):
+        def __init__(self, config, model, noise_schedule, tokenizer, min_p=0.0):
             super().__init__()
             self.model = model
             self.noise_schedule = noise_schedule
-            self.mask_id = mask_id
+            self.mask_id = tokenizer.mask_token_id
             self.min_p = min_p
+            self.position_metric = get_position_metric(config, tokenizer)
+            self.position_sampling_strategy = get_position_sampling_strategy(config)
+            self.token_sampling_strategy = get_token_sampling_strategy(config, tokenizer)
+            self.config = config
 
         def get_sigmas(self, t, eps=1e-4):
             dsigma = (1 - eps) / (1 - (1 - eps) * t.clip(eps, 1))
             sigma = -torch.log1p(-(1 - eps) * t.clip(eps, 1))
             return dsigma, sigma
 
-        def forward(self, z_t, t, tm1, i=None, eps=1e-4):
+        def forward(self, z_t, t, tm1, diffusion_mask, i=None, eps=1e-4):
             logits = self.model(z_t, t)
             logits[..., self.mask_id] = -1e6
 
+            update_positions = (z_t == self.mask_id)
             if i == 0:
                 z_tm1 = logits.argmax(-1)
             else:
+                probs = logits.softmax(-1)
+
                 _, sigma_t = self.get_sigmas(t, eps=eps)
                 _, sigma_tm1 = self.get_sigmas(tm1, eps=eps)
 
-                move_chance_t = 1 - torch.exp(-sigma_t)
-                move_chance_tm1 = 1 - torch.exp(-sigma_tm1)
-                move_chance_t = move_chance_t[:, None, None]
-                move_chance_tm1 = move_chance_tm1[:, None, None]
-                probs = logits.softmax(-1) * (move_chance_t - move_chance_tm1)
-                probs[:, :, self.mask_id] = move_chance_tm1[:, :, 0]
-                probs /= move_chance_t
-                if self.min_p > 0.0:
-                    is_small = (probs < self.min_p).float()
-                    probs = (1 - is_small) * probs
-                    probs = probs / probs.sum(-1, keepdim=True)
-                z_tm1 = sample_categorical(probs)
-                # z_tm1 = torch.distributions.Categorical(probs=probs).sample()
-                # z_tm1 = _sample_categorical(probs)
+                if self.config.sampling.position_sampling_strategy == "independent":
+                    # In train for the worst paper, the vanilla inference uses alpha_s and alpha_t. move_chance_tm1 is equal to 1 - alpha_s, move_chance_t is equal to 1 - alpha_t
+                    # The weight (move_chance_t - move_chance_tm1) / move_chance_t is equal to the probability (alpha_s - alpha_t) / (1 - alpha_t) to select a token for unmasking
+                    move_chance_t = 1 - torch.exp(-sigma_t)
+                    move_chance_tm1 = 1 - torch.exp(-sigma_tm1)
+                    move_chance_t = move_chance_t[:, None, None]
+                    move_chance_tm1 = move_chance_tm1[:, None, None]
+                    probs = logits.softmax(-1) * (move_chance_t - move_chance_tm1)
+                    probs[:, :, self.mask_id] = move_chance_tm1[:, :, 0]
+                    probs /= move_chance_t
+                    if self.min_p > 0.0:
+                        is_small = (probs < self.min_p).float()
+                        probs = (1 - is_small) * probs
+                        probs = probs / probs.sum(-1, keepdim=True)
+                    z_tm1 = sample_categorical(probs)
+                    # z_tm1 = torch.distributions.Categorical(probs=probs).sample()
+                    # z_tm1 = _sample_categorical(probs)
+                else:
+                    metric = self.position_metric(z_t, probs)
+                    metric = metric * diffusion_mask
+                    update_positions_from_strategy = self.position_sampling_strategy(metric)
+                    update_positions = update_positions * update_positions_from_strategy
+                    # print("getting next z_t")
+                    z_tm1 = self.token_sampling_strategy(probs)
 
-            copy_flag = (z_t != self.mask_id).to(z_t.dtype)
-            z_t = copy_flag * z_t + (1 - copy_flag) * z_tm1
-            return z_t
+            update_positions = update_positions * diffusion_mask
+            return torch.where(update_positions.bool(), z_tm1, z_t)
 
-    def __init__(self, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
+    def __init__(self, config, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
         super().__init__(model, tokenizer, noise_schedule, t_eps=t_eps)
-        self.sampling_step = self.DenoisingStep(model, noise_schedule, tokenizer.mask_token_id, min_p=min_p)
+        self.sampling_step = self.DenoisingStep(config, model, noise_schedule, tokenizer, min_p=min_p)
         if compile_step:
             self.sampling_step = torch.compile(self.sampling_step)
 
@@ -320,6 +336,26 @@ class MDLMSampler(Sampler):
             z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], i=i, eps=self.t_eps).clone()
 
         return z_t
+    
+    def _do_generate_from_given(self, initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, max_length, show_progress, device, keep_history=False):
+        ts = torch.linspace(self.t_eps, 1 - self.t_eps, num_denoising_steps + 1, device=device).unsqueeze(-1)
+
+        initial_z_t = initial_z_t.to(device, non_blocking=True)
+        diffusion_mask = diffusion_mask.to(device, non_blocking=True)
+
+        z_t = initial_z_t.clone()
+
+        history = [initial_z_t.clone()] if keep_history else None
+
+        for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress):
+            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=diffusion_mask, i=i, eps=self.t_eps).clone()
+            if keep_history:
+                history.append(z_t.clone())
+        
+        if keep_history:
+            return z_t, torch.stack(history, dim=0).permute(1, 0, 2)
+        else:
+            return z_t, None
 
 
 class AutoregressiveSampler(Sampler):
@@ -357,7 +393,7 @@ def get_sampler(ckpt_config, model, tokenizer, noise_schedule: NoiseSchedule, sa
         if ckpt_config.model.diffusion_process == "gidd":
             return GiddSampler(sampling_config, model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
         elif ckpt_config.model.diffusion_process == "mdlm":
-            return MDLMSampler(model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
+            return MDLMSampler(sampling_config, model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
         else:
             raise ValueError(f"Unsupported forward process: {ckpt_config.model.diffusion_process}")
     elif ckpt_config.model.type == "autoregressive":

@@ -1,26 +1,30 @@
 defaults:
   - logging: default
-  - data: owt
-  - model: small
+  - data: sudoku
+  - model: 6M
   - optimizer: adam
+  - sampling: training_sampling
+  - compilation: compile_torch
   - _self_
 
 model:
   type: diffusion
   diffusion_process: mdlm
   t_eps: 1e-4
+  puzzle_conditioning: none
 
 training:
   resume: null
   seed: 1
-  train_batch_size: 64
+  train_batch_size: 128
   eval_batch_size: 64
-  num_train_steps: 1000_000
+  score_batch_size: 64
+  num_train_steps: 134_000
   lr_schedule: cosine
-  warmup_steps: 10000
+  warmup_steps: 10_000
   low_discrepancy_sampling: True
   dtype: bf16
-  compile_model: True
+  use_diffusion_mask: True
 
 loss:
   loss_type: mdlm
