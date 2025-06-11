@@ -1,6 +1,8 @@
 type: adam
 lr: 1e-3 # 5e-4
-betas: [0.9, 0.99]
+# betas: [0.9, 0.99]
+betas: [0.9, 0.95]
 eps: 1e-9
-weight_decay: 0.02
+# weight_decay: 0.02
+weight_decay: 0.1
 grad_clip_norm: 1.0
