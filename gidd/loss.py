@@ -98,16 +98,15 @@ class GiddLoss(Loss):
         log_p_zt = log_p_t.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
         log_ratio = log_q_zt - log_p_zt
 
-        correction = -log_ratio + log_ratio.exp()
-        elbo = elbo_weights * (kl_loss + correction) + alpha_ratio
+        is_loss = log_ratio.exp() - log_ratio - 1
+        elbo = elbo_weights * (kl_loss + is_loss)
 
-        loss = ws * (kl_loss + correction)
+        loss = ws * (kl_loss + is_loss)
 
         diffusion_attention_and_mask = diffusion_mask * attention_mask
         metrics = {
             "kl_loss": (ws * kl_loss.detach() * diffusion_attention_and_mask).sum() / (ws * diffusion_attention_and_mask).sum(),
-            "log_ratio": (ws * log_ratio.detach() * diffusion_attention_and_mask).sum() / (ws * diffusion_attention_and_mask).sum(),
-            "ratio_corr": (ws * correction.detach() * diffusion_attention_and_mask).sum() / (ws * diffusion_attention_and_mask).sum(),
+            "is_loss": (ws * is_loss.detach() * diffusion_attention_and_mask).sum() / (ws * diffusion_attention_and_mask).sum(),
             "elbo": (elbo.detach() * diffusion_attention_and_mask).sum() / diffusion_attention_and_mask.sum(),
         }
 
@@ -126,18 +125,25 @@ class MDLMLoss(Loss):
         return dsigma, sigma
 
     def loss(self, logits, input_ids, diffusion_mask, attention_mask, z_t, t):
-        dsigma, sigma_t = self.get_sigmas(t)
+        # dsigma, sigma_t = self.get_sigmas(t)
 
         logits[..., self.mask_id] = self.neg_infty
-        logits = logits - torch.logsumexp(logits, dim=-1, keepdim=True)
+        logits = logits - torch.logsumexp(logits, dim=-1, keepdim=True) # normalization of softmax done for logits, i.e. logits are now the logs of the probabilities
 
         mask_ids = (z_t == self.mask_id)
         logits[~mask_ids] = self.neg_infty
         logits = torch.where(~mask_ids.unsqueeze(-1).expand_as(logits), logits.scatter(-1, z_t.unsqueeze(-1), 0), logits)
 
-        rec_loss = F.cross_entropy(logits.transpose(1, 2), input_ids, reduction="none")
+        # rec_loss = F.cross_entropy(logits.transpose(1, 2), input_ids, reduction="none") # This is equivalent to gathering the normalized logits at input_ids, multiplied by -1
+        rec_loss_by_gathering = - logits.gather(-1, input_ids.unsqueeze(-1)).squeeze(-1)
+        # print(f"rec_loss: {rec_loss[0, :10]}, rec_loss_by_gathering: {rec_loss_by_gathering[0, :10]}")
+        # assert torch.allclose(rec_loss, rec_loss_by_gathering, atol=1e-5), "rec_loss and rec_loss_by_gathering should be equal"
+        rec_loss = rec_loss_by_gathering
 
-        weights = dsigma.unsqueeze(-1) / torch.expm1(sigma_t).unsqueeze(-1)
+        # weights = dsigma.unsqueeze(-1) / torch.expm1(sigma_t).unsqueeze(-1) # The weights really are just (1 / t.clip(1e-4, 1)).unsqueeze(-1)
+        weights_from_t_directly = 1 / t.clip(1e-4, 1).unsqueeze(-1)
+        # assert torch.allclose(weights, weights_from_t_directly, atol=1e-5), "weights and weights_from_t_directly should be equal"
+        weights = weights_from_t_directly
         weights = weights * mask_ids.to(weights.dtype)
 
         elbo = weights * rec_loss
