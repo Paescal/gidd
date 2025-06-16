@@ -162,16 +162,13 @@ def sample_positions_independently(metric, p, generator=None):
 @torch.no_grad()
 def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0, generator=None):
     metric_is_non_zero_mask = metric != 0
-    # TODO: what exactly is top k even supposed to do? Select k elements sampled categorically without replacement from tokens which are currently masks, but with probabilities only considering tokens for the values 1-9?
-    # print(metric[0])
-    # metric = metric / torch.sum(metric, dim=-1, keepdim=True)
-    # print(f"metric shape: {metric.shape}")
     if gumbel_noise_coefficient > 0:
-        gumbel_noise = torch.distributions.gumbel.Gumbel(0, gumbel_noise_coefficient).sample(metric.shape).to(metric.device, dtype=metric.dtype)
-        metric = metric + gumbel_noise
-        metric = metric * metric_is_non_zero_mask
-    top_k_thresholds = torch.topk(metric, k, dim=-1).values[..., -1].unsqueeze(-1)
-    top_k_mask = metric >= top_k_thresholds
+        # gumbel_noise = torch.distributions.gumbel.Gumbel(0, gumbel_noise_coefficient).sample(metric.shape).to(metric.device, dtype=metric.dtype)
+        gumbel_noise =  -(-(torch.rand_like(metric)).log()).log()
+        metric = metric - torch.logsumexp(metric, dim=-1, keepdim=True) + gumbel_noise * gumbel_noise_coefficient * metric_is_non_zero_mask
+    chosen_positions_indicies = torch.topk(metric, k, dim=-1).indices
+    top_k_mask = torch.zeros_like(metric, dtype=bool).scatter_(-1, chosen_positions_indicies, True)
+    top_k_mask = top_k_mask & metric_is_non_zero_mask
     return top_k_mask
 
 @torch.no_grad()
