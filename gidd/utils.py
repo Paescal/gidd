@@ -38,6 +38,8 @@ def get_lr(config, lr, step):
 
 def get_position_metric(config, tokenizer):
     match config.sampling.position_metric:
+        case "probs_to_change":
+            return partial(position_metric_MDM_max, tokenizer=tokenizer)
         case "MDM_max":
             return partial(position_metric_MDM_max, tokenizer=tokenizer)
         case "MDM_margin":
@@ -70,6 +72,8 @@ def get_position_sampling_strategy(config):
         
 def get_token_sampling_strategy(config, tokenizer):
     match config.sampling.token_sampling_strategy:
+        case "change_token_max":
+            return sample_token_change_max
         case "MDM_max":
             return partial(sample_token_MDM_max, tokenizer=tokenizer)
         case "MDM_categorical":
@@ -178,6 +182,12 @@ def sample_categorical(probs, end_index=-1, generator=None):
     cumprobs[..., end_index:] = 1 + 1e-4
     samples = torch.searchsorted(cumprobs, uniform, right=True).squeeze(-1)
     return samples
+
+@torch.no_grad()
+def sample_token_change_max(probs, z_t, generator=None):
+    probs = probs.clone()
+    probs.scatter_(-1, z_t.unsqueeze(-1), 0)
+    return torch.argmax(probs, dim=-1)
 
 @torch.no_grad()
 def sample_token_MDM_max(probs, tokenizer, generator=None):

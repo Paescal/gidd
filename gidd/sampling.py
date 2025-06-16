@@ -104,8 +104,7 @@ class GiddSampler(Sampler):
             logits[..., self.tokenizer.mask_token_id:] = -1e6
             probs = logits.softmax(-1)
 
-            if self.config.sampling.position_sampling_strategy == "all" or self.config.sampling.position_sampling_strategy == "independent":
-
+            if self.config.sampling.position_sampling_strategy == "all" or self.config.sampling.position_sampling_strategy == "independent" or self.config.sampling.position_metric == "probs_to_change":
                 # if i > 0:
                 # print("getting probs at t and s")
                 q_s = self.noise_schedule.probs_at_t(probs, s)
@@ -126,31 +125,34 @@ class GiddSampler(Sampler):
                 q_ts = (alpha_ts * vz_t + beta_pi_ts_at_zt)
 
                 q_st = q_ts * q_s / q_zt
+                q_st_at_zt = q_st.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
+                probs_to_change = 1 - q_st_at_zt
+                if self.config.sampling.position_metric == "probs_to_change":
+                    probs = probs * probs_to_change.unsqueeze(-1)
                 if self.min_p > 0.0:
                     is_small = (q_st < self.min_p).float()
                     q_st = (1 - is_small) * q_st
                     q_st = q_st / q_st.sum(-1, keepdim=True)
                 if self.config.sampling.position_sampling_strategy == "all":
                     probs = q_st
-            # print(f"z_t: {z_t[..., 1]}")
-            # print(f"q_s: {q_s[..., 1, :10]}")
-            # print(f"q_st: {q_st[..., 1, :10]}")
-            # print("getting metric")
-            # print(f"probs of mask token: {q_st[..., self.tokenizer.mask_token_id]}")
-            metric = self.position_metric(z_t, probs)
-            # print(f"metric: {metric[..., 1]}")
+                    
+            if False: #self.config.sampling.position_metric == "probs_to_change":
+                metric = probs_to_change
+            else:
+                metric = self.position_metric(z_t, probs)
             metric = metric * diffusion_mask
-            # print("getting update positions")
+
             if self.config.sampling.position_sampling_strategy == "independent":
                 update_positions = self.position_sampling_strategy(metric, (alpha_s - alpha_t) / (1 - alpha_t))
             else:
                 update_positions = self.position_sampling_strategy(metric)
             update_positions = update_positions * diffusion_mask
-            # print("getting next z_t")
-            next_z_t = self.token_sampling_strategy(probs)
-            # print(f"z_t: {z_t}")
-            # print(f"update_positions: {update_positions}")
-            # print(f"next_z_t: {next_z_t}")
+            
+            if self.config.sampling.token_sampling_strategy == "change_token_max":
+                next_z_t = self.token_sampling_strategy(probs, z_t)
+            else:
+                next_z_t = self.token_sampling_strategy(probs)
+                
             return torch.where(update_positions.bool(), next_z_t, z_t)
 
     def __init__(self, config, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
@@ -290,33 +292,36 @@ class MDLMSampler(Sampler):
             else:
                 probs = logits.softmax(-1)
 
-                _, sigma_t = self.get_sigmas(t, eps=eps)
-                _, sigma_tm1 = self.get_sigmas(tm1, eps=eps)
-
                 if self.config.sampling.position_sampling_strategy == "independent":
                     # In train for the worst paper, the vanilla inference uses alpha_s and alpha_t. move_chance_tm1 is equal to 1 - alpha_s, move_chance_t is equal to 1 - alpha_t
                     # The weight (move_chance_t - move_chance_tm1) / move_chance_t is equal to the probability (alpha_s - alpha_t) / (1 - alpha_t) to select a token for unmasking
+                    _, sigma_t = self.get_sigmas(t, eps=eps)
+                    _, sigma_tm1 = self.get_sigmas(tm1, eps=eps)
                     move_chance_t = 1 - torch.exp(-sigma_t)
                     move_chance_tm1 = 1 - torch.exp(-sigma_tm1)
-                    move_chance_t = move_chance_t[:, None, None]
-                    move_chance_tm1 = move_chance_tm1[:, None, None]
-                    probs = logits.softmax(-1) * (move_chance_t - move_chance_tm1)
-                    probs[:, :, self.mask_id] = move_chance_tm1[:, :, 0]
-                    probs /= move_chance_t
-                    if self.min_p > 0.0:
-                        is_small = (probs < self.min_p).float()
-                        probs = (1 - is_small) * probs
-                        probs = probs / probs.sum(-1, keepdim=True)
-                    z_tm1 = sample_categorical(probs)
-                    # z_tm1 = torch.distributions.Categorical(probs=probs).sample()
-                    # z_tm1 = _sample_categorical(probs)
+                    prob_unmask_this_step = (move_chance_t - move_chance_tm1) / move_chance_t
+
+                    # move_chance_t = 1 - torch.exp(-sigma_t)
+                    # move_chance_tm1 = 1 - torch.exp(-sigma_tm1)
+                    # move_chance_t = move_chance_t[:, None, None]
+                    # move_chance_tm1 = move_chance_tm1[:, None, None]
+                    # probs = logits.softmax(-1) * (move_chance_t - move_chance_tm1)
+                    # probs[:, :, self.mask_id] = move_chance_tm1[:, :, 0]
+                    # probs /= move_chance_t
+                    # if self.min_p > 0.0:
+                    #     is_small = (probs < self.min_p).float()
+                    #     probs = (1 - is_small) * probs
+                    #     probs = probs / probs.sum(-1, keepdim=True)
+                    # z_tm1 = sample_categorical(probs)
+                
+                metric = self.position_metric(z_t, probs)
+                metric = metric * diffusion_mask
+                if self.config.sampling.position_sampling_strategy == "independent":
+                    update_positions_from_strategy = self.position_sampling_strategy(metric, prob_unmask_this_step)
                 else:
-                    metric = self.position_metric(z_t, probs)
-                    metric = metric * diffusion_mask
                     update_positions_from_strategy = self.position_sampling_strategy(metric)
-                    update_positions = update_positions * update_positions_from_strategy
-                    # print("getting next z_t")
-                    z_tm1 = self.token_sampling_strategy(probs)
+                update_positions = update_positions * update_positions_from_strategy
+                z_tm1 = self.token_sampling_strategy(probs)
 
             update_positions = update_positions * diffusion_mask
             return torch.where(update_positions.bool(), z_tm1, z_t)

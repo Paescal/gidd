@@ -25,7 +25,7 @@ training:
   # num_train_steps: 1 epoch = 1_889_993 / 64 = 29_532
   # for shah: 1 epoch = 1_704_462 samples, 1_704_462 / 128 = 13_316.109
   num_train_steps: 134_000 # 236_256 # 118_128
-  lr_schedule: constant # [cosine, linear, constant]
+  lr_schedule: cosine # [cosine, linear, constant]
   warmup_steps: 10_000 #10000
   low_discrepancy_sampling: True
   dtype: bf16
