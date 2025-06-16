@@ -61,7 +61,7 @@ class HybridDiffusion(NoiseSchedule):
 
         # log_B = -np.log1p((1 - self.p_uniform) / self.p_uniform * self.vocab_size_semantically / 2) # TODO: why log1p?
         # log_B = -np.log((1 - self.p_uniform) / self.p_uniform * (self.vocab_size_semantically - 1) / 2)
-        log_B = gamma*np.log(2) - np.log1p((1 - 2*self.p_uniform) / self.p_uniform)
+        log_B = gamma*np.log(2) + np.log(self.p_uniform) - np.log(1 - self.p_uniform)
         self.register_buffer("log_B", torch.tensor(float(log_B)).clip(-clip_noise))
         self.register_buffer("log_gamma", torch.tensor(float(gamma)).log())
 
@@ -130,7 +130,7 @@ class HybridDiffusion(NoiseSchedule):
         alpha_t, beta_pi = self.get_alpha_betapi(t, eps=eps)
 
         probs = prs.mul(alpha_t.unsqueeze(-1))
-        probs.add_(beta_pi.unsqueeze(1))
+        probs[..., :beta_pi.shape[-1]].add_(beta_pi.unsqueeze(1))
         return probs.to(orig_dtype)
     
     def sample_zt(self, input_ids, diffusion_mask, t):
