@@ -73,7 +73,7 @@ def get_position_sampling_strategy(config):
 def get_token_sampling_strategy(config, tokenizer):
     match config.sampling.token_sampling_strategy:
         case "change_token_max":
-            return sample_token_change_max
+            return partial(sample_token_change_max, tokenizer=tokenizer)
         case "MDM_max":
             return partial(sample_token_MDM_max, tokenizer=tokenizer)
         case "MDM_categorical":
@@ -164,7 +164,9 @@ def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0, generato
     metric_is_non_zero_mask = metric != 0
     if gumbel_noise_coefficient > 0:
         # gumbel_noise = torch.distributions.gumbel.Gumbel(0, gumbel_noise_coefficient).sample(metric.shape).to(metric.device, dtype=metric.dtype)
-        gumbel_noise =  -(-(torch.rand_like(metric)).log()).log()
+        # gumbel_noise =  -(-(torch.rand_like(metric)).log()).log()
+        # metric = metric - torch.logsumexp(metric, dim=-1, keepdim=True) + gumbel_noise * gumbel_noise_coefficient * metric_is_non_zero_mask
+        gumbel_noise =  -(-(gumbel_noise_coefficient * torch.rand_like(metric)).log()).log()
         metric = metric - torch.logsumexp(metric, dim=-1, keepdim=True) + gumbel_noise * gumbel_noise_coefficient * metric_is_non_zero_mask
     chosen_positions_indicies = torch.topk(metric, k, dim=-1).indices
     top_k_mask = torch.zeros_like(metric, dtype=bool).scatter_(-1, chosen_positions_indicies, True)
@@ -181,9 +183,10 @@ def sample_categorical(probs, end_index=-1, generator=None):
     return samples
 
 @torch.no_grad()
-def sample_token_change_max(probs, z_t, generator=None):
+def sample_token_change_max(probs, z_t, tokenizer, generator=None):
     probs = probs.clone()
     probs.scatter_(-1, z_t.unsqueeze(-1), 0)
+    probs[..., tokenizer.mask_token_id] = 0
     return torch.argmax(probs, dim=-1)
 
 @torch.no_grad()
