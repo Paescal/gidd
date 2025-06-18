@@ -125,10 +125,9 @@ class GiddSampler(Sampler):
                 q_ts = (alpha_ts * vz_t + beta_pi_ts_at_zt)
 
                 q_st = q_ts * q_s / q_zt
-                q_st_at_zt = q_st.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
-                probs_to_change = 1 - q_st_at_zt
-                if self.config.sampling.position_metric == "probs_to_change":
-                    probs = probs * probs_to_change.unsqueeze(-1)
+                # print(f"shapes: q_st: {q_st.shape}, q_ts: {q_ts.shape}, q_s: {q_s.shape}, q_zt: {q_zt.shape}, beta_pi_ts_at_zt: {beta_pi_ts_at_zt.shape}, alpha_ts: {alpha_ts.shape}, t: {t.shape}")
+                # print(f"q_st: {q_st[0, -2, self.tokenizer.mask_token_id]}, q_ts: {q_ts[0, -2, self.tokenizer.mask_token_id]}, q_s: {q_s[0, -2, self.tokenizer.mask_token_id]}, q_zt: {q_zt[0, -2, 0]}, beta_pi_ts_at_zt: {beta_pi_ts_at_zt[0, -2, 0]}")
+                
                 if self.min_p > 0.0:
                     is_small = (q_st < self.min_p).float()
                     q_st = (1 - is_small) * q_st
@@ -136,8 +135,51 @@ class GiddSampler(Sampler):
                 if self.config.sampling.position_sampling_strategy == "all":
                     probs = q_st
                     
-            if False: #self.config.sampling.position_metric == "probs_to_change":
-                metric = probs_to_change
+            if self.config.sampling.position_metric == "probs_to_change":
+                q_st_at_zt = q_st.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
+                # token_start = 81
+                # token_end = 86
+                # print(f"q_st: {q_st[0, token, :10]}")
+                # print(f"q_st_at_zt: {q_st_at_zt[0, token:token+5]}\nz_t: {z_t[0, token:token+5]}")
+                
+                # Calculate the probability to unmask a token,
+                # compare it with the probabilities to change a token.
+                # If there exists a token which is more likely to change than it is likely to unmask a token, then change it.
+                # Otherwise unmask a token based on the current criteria (position_metric, e.g. max confidence, etc.)
+                
+                # P(masked s) = P(masked s | unmasked t) * P(unmasked t) + P(masked s | masked t) * P(masked t), P(masked s | unmasked t) = 0
+                # -> P(masked s | masked t) = P(masked s) / P(masked t)
+                # -> P(unmasked s | masked t) = 1 - P(masked s) / P(masked t)
+
+                # P(masked s | masked t) = P(masked t | masked s) * P(masked s) / P(masked t), P(masked t | masked s) = 1
+                # -> P(masked s | masked t) = P(masked s) / P(masked t)
+                probs_to_change = 1 - q_st_at_zt
+                beta_pi_s_at_mask = beta_pi_s[..., self.tokenizer.mask_token_id]
+                beta_pi_t_at_mask = beta_pi_t[..., self.tokenizer.mask_token_id]
+                probs_to_not_unmask = beta_pi_s_at_mask / beta_pi_t_at_mask
+                probs_to_not_unmask = probs_to_not_unmask * (alpha_t.squeeze(-1) / alpha_s.squeeze(-1) + beta_pi_t_at_mask - alpha_t.squeeze(-1) / alpha_s.squeeze(-1) * beta_pi_s_at_mask)
+                probs_to_unmask = 1 - probs_to_not_unmask
+                # print(f"Shape of probs to not unmask: {probs_to_not_unmask.shape}, beta_pi_s_at_mask: {beta_pi_s_at_mask.shape}")
+                # print(f"probs to not unmask: {1 - probs_to_unmask[0]} ( = {beta_pi_s_at_mask.item()} / {beta_pi_t_at_mask.item()})")
+                # print(f"probs to not change: {q_st_at_zt[0, token_start:token_end]}")
+                # print(f"q_ts factor: {(alpha_t / alpha_s + beta_pi_t_at_mask - alpha_t / alpha_s * beta_pi_s_at_mask)[0, 0].item()}")
+                probs_to_unmask = probs_to_unmask.unsqueeze(-1).expand_as(probs_to_change)
+
+                probs_to_change = probs_to_change * diffusion_mask
+                probs_to_unmask = probs_to_unmask * diffusion_mask
+
+                positions_to_change = (probs_to_change > probs_to_unmask + 1e-6)
+                # print(f"z_t: {z_t[0, token_start:token_end]}")
+                # print(f"probs_to_change: {probs_to_change[0, token_start:token_end]}")
+                # print(f"probs_to_unmask: {probs_to_unmask[0, token_start:token_end]}")
+
+                if positions_to_change.any():
+                    # print("Changing tokens")
+                    # print(f"Positions to change: {positions_to_change[0, token_start:token_end]}")
+                    metric = probs_to_change * positions_to_change.to(dtype=probs_to_change.dtype)
+                else:
+                    # print("Unmasking tokens")
+                    metric = self.position_metric(z_t, probs)
             else:
                 metric = self.position_metric(z_t, probs)
             metric = metric * diffusion_mask
@@ -147,6 +189,7 @@ class GiddSampler(Sampler):
             else:
                 update_positions = self.position_sampling_strategy(metric)
             update_positions = update_positions * diffusion_mask
+            # print(f"update_positions: {update_positions[0, token:token+5]}")
             
             if self.config.sampling.token_sampling_strategy == "change_token_max":
                 next_z_t = self.token_sampling_strategy(probs, z_t)

@@ -1,3 +1,13 @@
 num_samples,num_denoising_steps,model,dataset,position_metric,position_strategy,token_strategy,k,gumbel
-6400,81,2025-06-06/17-11-47,easy,probs_to_change,top_k_gumbel,change_token_max,1,0
-6400,81,2025-06-06/17-11-47,easy,MDM_margin,top_k_gumbel,MDM_max,1,0
+3200,81,2025-06-05/15-24-49,easy,probs_to_change,top_k_gumbel,change_token_max,1,0
+3200,81,2025-06-05/15-24-49,easy,MDM_margin,top_k_gumbel,MDM_max,1,0
+3200,81,2025-06-05/15-24-49,hard,probs_to_change,top_k_gumbel,change_token_max,1,0
+3200,81,2025-06-05/15-24-49,hard,MDM_margin,top_k_gumbel,MDM_max,1,0
+3200,81,2025-06-06/17-11-47,easy,probs_to_change,top_k_gumbel,change_token_max,1,0
+3200,81,2025-06-06/17-11-47,easy,MDM_margin,top_k_gumbel,MDM_max,1,0
+3200,81,2025-06-06/17-11-47,hard,probs_to_change,top_k_gumbel,change_token_max,1,0
+3200,81,2025-06-06/17-11-47,hard,MDM_margin,top_k_gumbel,MDM_max,1,0
+3200,81,2025-06-13/15-04-32,easy,probs_to_change,top_k_gumbel,change_token_max,1,0
+3200,81,2025-06-13/15-04-32,easy,MDM_margin,top_k_gumbel,MDM_max,1,0
+3200,81,2025-06-13/15-04-32,hard,probs_to_change,top_k_gumbel,change_token_max,1,0
+3200,81,2025-06-13/15-04-32,hard,MDM_margin,top_k_gumbel,MDM_max,1,0
