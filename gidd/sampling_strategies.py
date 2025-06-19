@@ -11,14 +11,14 @@ def get_score_position(config, tokenizer):
         case "MDM_margin":
             return partial(position_metric_MDM_margin, tokenizer=tokenizer)
 
-def get_select_position(config, tokenizer):
+def get_select_position(config):
     match config.sampling.select_position:
         case "all":
             return all_positions
         case "independent":
             return sample_positions_independently
         case "top_k_gumbel":
-            return partial(sample_position_top_k_gumbel, tokenizer=tokenizer)
+            return partial(sample_position_top_k_gumbel, k=config.sampling.k, gumbel_noise_coefficient=config.sampling.gumbel_noise_coefficient)
 
 def get_update_token(config, tokenizer):
     match config.sampling.update_token:
