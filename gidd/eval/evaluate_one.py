@@ -24,7 +24,7 @@ def dict_to_namespace(d):
         return d
 
 def main(args, sampling_config):
-    device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
+    device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
     torch.set_float32_matmul_precision('high')
     torch.set_grad_enabled(False)
 
@@ -34,7 +34,7 @@ def main(args, sampling_config):
     ds_path = hydra.utils.to_absolute_path(f"./gidd/datasets/sudoku_shah/{args.dataset}/test")
     ds = load_from_disk(ds_path)
     data_loader = _get_dataloader(ckpt_config, ds, shuffle=False, drop_last=False, batch_size=args.batch_size, collate_fn=partial(default_collator, ckpt_config, ckpt_tokenizer, text_key="text"), persistent_workers=False)
-    sampler = get_sampler(ckpt_config, model, ckpt_tokenizer, noise_schedule, sampling_config=sampling_config, compile_step=args.compile_torch, min_p=args.min_p)
+    sampler = get_sampler(ckpt_config, model, ckpt_tokenizer, noise_schedule, sampling_config=sampling_config, compile_step=bool(args.compile_torch), min_p=args.min_p)
     
     model.eval()
     strategy_metrics = {}
@@ -73,7 +73,7 @@ if __name__ == "__main__":
     parser.add_argument('--num_denoising_steps', type=int, default=81, help='Number of denoising steps')
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
     parser.add_argument('--min_p', type=float, default=0, help='Minimum probability to be chosen in categorical sampling')
-    parser.add_argument('--compile_torch', type=bool, default=False, help='Whether to compile the torch model')
+    parser.add_argument('--compile_torch', type=int, default=False, help='Whether to compile the torch model')
     
     sampling_argument_group = parser.add_argument_group('Sampling arguments')
     sampling_argument_group.add_argument('--strategy', type=str, required=True, help='Sampling strategy to evaluate')

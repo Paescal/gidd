@@ -155,8 +155,11 @@ def all_positions(metric):
     return metric != 0
 
 @torch.no_grad()
-def sample_positions_independently(metric, p, generator=None):
-    return torch.rand(metric.shape, dtype=metric.dtype, device=metric.device, generator=generator) < p
+def sample_positions_independently(z_t, p):
+    return torch.rand_like(z_t, dtype=p.dtype) < p
+# @torch.no_grad()
+# def sample_positions_independently(metric, p, generator=None):
+#     return torch.rand(metric.shape, dtype=metric.dtype, device=metric.device, generator=generator) < p
 
 
 @torch.no_grad()
@@ -167,7 +170,8 @@ def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0, generato
         # gumbel_noise =  -(-(torch.rand_like(metric)).log()).log()
         # metric = metric - torch.logsumexp(metric, dim=-1, keepdim=True) + gumbel_noise * gumbel_noise_coefficient * metric_is_non_zero_mask
         gumbel_noise =  -(-(gumbel_noise_coefficient * torch.rand_like(metric)).log()).log()
-        metric = metric - torch.logsumexp(metric, dim=-1, keepdim=True) + gumbel_noise * gumbel_noise_coefficient * metric_is_non_zero_mask
+        metric = metric + gumbel_noise * gumbel_noise_coefficient * metric_is_non_zero_mask
+        # metric = metric - torch.logsumexp(metric, dim=-1, keepdim=True) + gumbel_noise * gumbel_noise_coefficient * metric_is_non_zero_mask
     chosen_positions_indicies = torch.topk(metric, k, dim=-1).indices
     top_k_mask = torch.zeros_like(metric, dtype=bool).scatter_(-1, chosen_positions_indicies, True)
     top_k_mask = top_k_mask & metric_is_non_zero_mask

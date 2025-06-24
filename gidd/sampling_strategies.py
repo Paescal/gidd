@@ -33,44 +33,40 @@ def get_update_token(config, tokenizer):
 def get_sampling_strategy(config, tokenizer, noise_schedule=None, min_p=None):
     match config.sampling.strategy:
         case "mdlm_vanilla":
-            return partial(mdlm_vanilla(update_token=get_update_token(config, tokenizer)))
+            return partial(mdlm_vanilla,
+                           update_token=get_update_token(config, tokenizer),)
         case "mdlm_adaptive_score_select_update":
-            return partial(mdlm_adaptive_score_select_update(
-                score_position=get_score_position(config, tokenizer),
-                select_position=get_select_position(config),
-                update_token=get_update_token(config, tokenizer),
-            ))
+            return partial(mdlm_adaptive_score_select_update,
+                           score_position=get_score_position(config, tokenizer),
+                           select_position=get_select_position(config),
+                           update_token=get_update_token(config, tokenizer),)
         case "gidd_vanilla_original":
-            return partial(gidd_vanilla_original(
-                tokenizer=tokenizer,
-                noise_schedule=noise_schedule,
-                min_p=min_p,
-            ))
+            return partial(gidd_vanilla_original,
+                           tokenizer=tokenizer,
+                           noise_schedule=noise_schedule,
+                           min_p=min_p,)
         case "gidd_vanilla_split":
-            return partial(gidd_vanilla_split(
-                noise_schedule=noise_schedule,
-                update_token=get_update_token(config, tokenizer),
-            ))
+            return partial(gidd_vanilla_split,
+                           noise_schedule=noise_schedule,
+                           update_token=get_update_token(config, tokenizer),)
         case "gidd_adaptive_score_select_update":
-            return partial(gidd_adaptive_score_select_update(
-                score_position=get_score_position(config, tokenizer),
-                select_position=get_select_position(config),
-                update_token=get_update_token(config, tokenizer),
-            ))
+            return partial(gidd_adaptive_score_select_update,
+                           score_position=get_score_position(config, tokenizer),
+                           select_position=get_select_position(config),
+                           update_token=get_update_token(config, tokenizer),)
         case "gidd_adaptive_change_vs_unmask":
-            return partial(gidd_adaptive_change_vs_unmask(
-                tokenizer=tokenizer,
-                noise_schedule=noise_schedule,
-                min_p=min_p,
-                score_position=get_score_position(config, tokenizer),
-                select_position=get_select_position(config),
-                update_token=get_update_token(config, tokenizer),
-            ))
+            return partial(gidd_adaptive_change_vs_unmask,
+                           tokenizer=tokenizer,
+                           noise_schedule=noise_schedule,
+                           min_p=min_p,
+                           score_position=get_score_position(config, tokenizer),
+                           select_position=get_select_position(config),
+                           update_token=get_update_token(config, tokenizer),)
 
 
 @torch.no_grad()
-def mdlm_vanilla(update_token, probs, z_t, t, tm1, diffusion_mask, eps=1e-4):
-    def get_sigmas(self, t, eps=1e-4):
+def mdlm_vanilla(probs, z_t, t, tm1, diffusion_mask, eps=1e-4, update_token=None):
+    def get_sigmas(t, eps=1e-4):
         dsigma = (1 - eps) / (1 - (1 - eps) * t.clip(eps, 1))
         sigma = -torch.log1p(-(1 - eps) * t.clip(eps, 1))
         return dsigma, sigma
@@ -86,7 +82,7 @@ def mdlm_vanilla(update_token, probs, z_t, t, tm1, diffusion_mask, eps=1e-4):
     return update_positions, z_tm1
 
 @torch.no_grad()
-def mdlm_adaptive_score_select_update(score_position, select_position, update_token, probs, z_t, t, tm1, diffusion_mask, eps=1e-4):
+def mdlm_adaptive_score_select_update(probs, z_t, t, tm1, diffusion_mask, eps=1e-4, score_position=None, select_position=None, update_token=None):
     score = score_position(z_t, probs) * diffusion_mask
     update_positions = select_position(score)
     z_tm1 = update_token(probs)
@@ -201,7 +197,7 @@ def gidd_adaptive_change_vs_unmask(probs, z_t, t, s, diffusion_mask, tokenizer, 
     else:
         # print("Unmasking tokens")
         score = score_position(z_t, probs)
-        next_z_t = update_token(probs, z_t)
+        next_z_t = update_token(probs)
     score = score * diffusion_mask
     update_positions = select_position(score)
     return update_positions, next_z_t

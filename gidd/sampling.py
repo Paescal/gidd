@@ -91,9 +91,9 @@ class GiddSampler(Sampler):
             self.noise_schedule = noise_schedule
             self.tokenizer = tokenizer
             self.min_p = min_p
-            self.position_metric = get_position_metric(config, tokenizer)
-            self.position_sampling_strategy = get_position_sampling_strategy(config)
-            self.token_sampling_strategy = get_token_sampling_strategy(config, tokenizer)
+            # self.position_metric = get_position_metric(config, tokenizer)
+            # self.position_sampling_strategy = get_position_sampling_strategy(config)
+            # self.token_sampling_strategy = get_token_sampling_strategy(config, tokenizer)
             self.sampling_strategy = get_sampling_strategy(config, tokenizer, noise_schedule=noise_schedule, min_p=min_p)
             self.config = config
 
@@ -318,9 +318,9 @@ class MDLMSampler(Sampler):
             self.noise_schedule = noise_schedule
             self.mask_id = tokenizer.mask_token_id
             self.min_p = min_p
-            self.position_metric = get_position_metric(config, tokenizer)
-            self.position_sampling_strategy = get_position_sampling_strategy(config)
-            self.token_sampling_strategy = get_token_sampling_strategy(config, tokenizer)
+            # self.position_metric = get_position_metric(config, tokenizer)
+            # self.position_sampling_strategy = get_position_sampling_strategy(config)
+            # self.token_sampling_strategy = get_token_sampling_strategy(config, tokenizer)
             self.sampling_strategy = get_sampling_strategy(config, tokenizer)
             self.config = config
 
