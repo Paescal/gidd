@@ -22,14 +22,11 @@ score_positions=(
     # "MDM_margin"
 )
 select_positions=(
-    # "all"
-    # "independent"
     "top_k_gumbel"
 )
 update_tokens=(
     "MDM_max"
     # "MDM_categorical"
-    # "categorical"
 )
 ks=(
     "1"
