@@ -28,6 +28,10 @@ def main(args, sampling_config):
     torch.set_float32_matmul_precision('high')
     torch.set_grad_enabled(False)
 
+    seed = args.seed
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
     model_path = hydra.utils.to_absolute_path(f"./outputs/{args.checkpoint}")
     model, noise_schedule, ckpt_tokenizer, ckpt_config = load_checkpoint(model_path, device=device)
     dtype = parse_dtype(ckpt_config.training.dtype)
@@ -61,12 +65,15 @@ def main(args, sampling_config):
                     strategy_metrics[k] = strategy_metrics.get(k, 0) + v * bs
                 pbar.update(bs)
     accuracy = strategy_metrics['correct_solution'].item() / args.num_samples
-    print(f"{accuracy:.4f}")
+    correctly_filled_cells = strategy_metrics['correctly_filled_cells'].item() / args.num_samples
+    print(f"accuracy={accuracy:.4f}")
+    print(f"correctly_filled_cells={correctly_filled_cells:.4f}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', type=int, default=0, help='Device to use for evaluation')
+    parser.add_argument('--seed', type=int, default=1, help='Seed for reproducibility')
     parser.add_argument('--checkpoint', type=str, required=True, help='Checkpoint to evaluate')
     parser.add_argument('--dataset', type=str, required=True, help='Dataset to evaluate (easy, hard)')
     parser.add_argument('--num_samples', type=int, default=5000, help='Number of samples to generate')
@@ -79,7 +86,11 @@ if __name__ == "__main__":
     sampling_argument_group.add_argument('--strategy', type=str, required=True, help='Sampling strategy to evaluate')
     sampling_argument_group.add_argument('--score_position', type=str, default=None, help='Scoring function for updating a position')
     sampling_argument_group.add_argument('--select_position', type=str, default=None, help='Sampling strategy for selecting a position')
+    sampling_argument_group.add_argument('--select_position_change', type=str, default=None, help='Sampling strategy for selecting a position when changing an unmasked token')
+    sampling_argument_group.add_argument('--select_position_unmask', type=str, default=None, help='Sampling strategy for selecting a position when unmasking a token')
     sampling_argument_group.add_argument('--update_token', type=str, default=None, help='Sampling strategy for updating a token')
+    sampling_argument_group.add_argument('--update_token_change', type=str, default=None, help='Sampling strategy for updating a token when changing an unmasked token')
+    sampling_argument_group.add_argument('--update_token_unmask', type=str, default=None, help='Sampling strategy for updating a token when unmasking a token')
     sampling_argument_group.add_argument('--k', type=int, default=None, help='K for top-k gumbel sampling')
     sampling_argument_group.add_argument('--gumbel_noise_coefficient', type=float, default=None, help='Gumbel noise coefficient for top-k gumbel sampling')
 
@@ -90,7 +101,11 @@ if __name__ == "__main__":
             "strategy": args.strategy,
             "score_position": args.score_position,
             "select_position": args.select_position,
+            "select_position_change": args.select_position_change,
+            "select_position_unmask": args.select_position_unmask,
             "update_token": args.update_token,
+            "update_token_change": args.update_token_change,
+            "update_token_unmask": args.update_token_unmask,
             "k": args.k,
             "gumbel_noise_coefficient": args.gumbel_noise_coefficient
         }

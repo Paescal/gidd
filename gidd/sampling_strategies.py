@@ -2,7 +2,20 @@ import torch
 import torch.nn.functional as F
 from functools import partial
 
-from gidd.utils import position_metric_MDM_max, position_metric_MDM_margin, all_positions, sample_positions_independently, sample_position_top_k_gumbel, sample_token_MDM_max, sample_token_MDM_categorical, sample_categorical, sample_token_change_max
+from gidd.utils import (
+    position_score_change_max,
+    position_score_change_margin,
+    position_metric_MDM_max,
+    position_metric_MDM_margin,
+    all_positions,
+    sample_positions_independently,
+    sample_position_top_k_gumbel,
+    sample_token_change_max,
+    sample_token_change_categorical,
+    sample_token_MDM_max,
+    sample_token_MDM_categorical,
+    sample_categorical,
+)
 
 
 def get_score_position(config, tokenizer):
@@ -11,9 +24,21 @@ def get_score_position(config, tokenizer):
             return partial(position_metric_MDM_max, tokenizer=tokenizer)
         case "MDM_margin":
             return partial(position_metric_MDM_margin, tokenizer=tokenizer)
+        case "change_max":
+            return partial(position_score_change_max, tokenizer=tokenizer)
+        case "change_margin":
+            return partial(position_score_change_margin, tokenizer=tokenizer)
 
-def get_select_position(config):
-    match config.sampling.select_position:
+def get_select_position(config, arg_name='select_position'):
+    match arg_name:
+        case 'select_position':
+            arg = config.sampling.select_position
+        case 'select_position_change':
+            arg = config.sampling.select_position_change
+        case 'select_position_unmask':
+            arg = config.sampling.select_position_unmask
+
+    match arg:
         case "all":
             return all_positions
         case "independent":
@@ -21,12 +46,24 @@ def get_select_position(config):
         case "top_k_gumbel":
             return partial(sample_position_top_k_gumbel, k=config.sampling.k, gumbel_noise_coefficient=config.sampling.gumbel_noise_coefficient)
 
-def get_update_token(config, tokenizer):
-    match config.sampling.update_token:
+def get_update_token(config, tokenizer, arg_name='update_token'):
+    match arg_name:
+        case 'update_token':
+            arg = config.sampling.update_token
+        case 'update_token_change':
+            arg = config.sampling.update_token_change
+        case 'update_token_unmask':
+            arg = config.sampling.update_token_unmask
+
+    match arg:
         case "MDM_max":
             return partial(sample_token_MDM_max, tokenizer=tokenizer)
         case "MDM_categorical":
             return partial(sample_token_MDM_categorical, tokenizer=tokenizer)
+        case "change_max":
+            return partial(sample_token_change_max, tokenizer=tokenizer)
+        case "change_categorical":
+            return partial(sample_token_change_categorical, tokenizer=tokenizer)
         case "categorical":
             return sample_categorical
 
@@ -49,6 +86,10 @@ def get_sampling_strategy(config, tokenizer, noise_schedule=None, min_p=None):
             return partial(gidd_vanilla_split,
                            noise_schedule=noise_schedule,
                            update_token=get_update_token(config, tokenizer),)
+        case "gidd_vanilla_independent_change":
+            return partial(gidd_vanilla_independent_change,
+                           update_token=get_update_token(config, tokenizer),
+                           )
         case "gidd_adaptive_score_select_update":
             return partial(gidd_adaptive_score_select_update,
                            score_position=get_score_position(config, tokenizer),
@@ -60,7 +101,14 @@ def get_sampling_strategy(config, tokenizer, noise_schedule=None, min_p=None):
                            noise_schedule=noise_schedule,
                            min_p=min_p,
                            score_position=get_score_position(config, tokenizer),
-                           select_position=get_select_position(config),
+                           select_position_change=get_select_position(config, arg_name='select_position_change'),
+                           select_position_umask=get_select_position(config, arg_name='select_position_unmask'),
+                           update_token_change=get_update_token(config, tokenizer, arg_name='update_token_change'),
+                           update_token_unmask=get_update_token(config, tokenizer, arg_name='update_token_unmask'),)
+        case "gidd_change_based_on_model_confidence_to_change":
+            return partial(gidd_change_based_on_model_confidence_to_change,
+                           score_position=get_score_position(config, tokenizer),
+                           select_position=get_select_position(config, tokenizer),
                            update_token=get_update_token(config, tokenizer),)
 
 
@@ -126,6 +174,35 @@ def gidd_vanilla_split(probs, z_t, t, s, diffusion_mask, noise_schedule, update_
     return update_positions, next_z_t
 
 @torch.no_grad()
+def gidd_vanilla_independent_change(probs, z_t, t, s, diffusion_mask, tokenizer, noise_schedule, min_p, update_token):
+    q_s = noise_schedule.probs_at_t(probs, s)
+    q_t = noise_schedule.probs_at_t(probs, t)
+    q_zt = q_t.gather(-1, z_t.unsqueeze(-1))
+
+    alpha_t, beta_pi_t = noise_schedule.get_alpha_betapi(t)
+    alpha_s, beta_pi_s = noise_schedule.get_alpha_betapi(s)
+
+    alpha_ts = alpha_t / alpha_s
+    beta_pi_ts = beta_pi_t - alpha_t / alpha_s * beta_pi_s
+
+    vocab_size_architecturally = len(tokenizer)
+    vz_t = F.one_hot(z_t, num_classes=vocab_size_architecturally)
+    beta_pi_ts_at_zt = beta_pi_ts.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
+    q_ts = (alpha_ts * vz_t + beta_pi_ts_at_zt)
+
+    q_st = q_ts * q_s / q_zt
+    
+    if min_p > 0.0:
+        is_small = (q_st < min_p).float()
+        q_st = (1 - is_small) * q_st
+        q_st = q_st / q_st.sum(-1, keepdim=True)
+    
+    probs_to_change_1m = q_st.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
+    update_positions = torch.rand_like(probs_to_change_1m) > probs_to_change_1m
+    next_z_t = update_token(probs)
+    return update_positions, next_z_t
+
+@torch.no_grad()
 def gidd_adaptive_score_select_update(probs, z_t, t, s, diffusion_mask, score_position, select_position, update_token):
     score = score_position(z_t, probs) * diffusion_mask
     update_positions = select_position(score)
@@ -133,7 +210,7 @@ def gidd_adaptive_score_select_update(probs, z_t, t, s, diffusion_mask, score_po
     return update_positions, next_z_t
 
 @torch.no_grad()
-def gidd_adaptive_change_vs_unmask(probs, z_t, t, s, diffusion_mask, tokenizer, noise_schedule, min_p, score_position, select_position, update_token):
+def gidd_adaptive_change_vs_unmask(probs, z_t, t, s, diffusion_mask, tokenizer, noise_schedule, min_p, score_position, select_position_change, select_position_unmask, update_token_change, update_token_unmask):
     q_s = noise_schedule.probs_at_t(probs, s)
     q_t = noise_schedule.probs_at_t(probs, t)
     q_zt = q_t.gather(-1, z_t.unsqueeze(-1))
@@ -193,11 +270,19 @@ def gidd_adaptive_change_vs_unmask(probs, z_t, t, s, diffusion_mask, tokenizer, 
         # print("Changing tokens")
         # print(f"Positions to change: {positions_to_change[0, token_start:token_end]}")
         score = probs_to_change * positions_to_change.to(dtype=probs_to_change.dtype)
-        next_z_t = sample_token_change_max(probs, z_t, tokenizer)
+        score = score * diffusion_mask
+        update_positions = select_position_change(score)
+        next_z_t = update_token_change(probs, z_t, tokenizer)
     else:
         # print("Unmasking tokens")
         score = score_position(z_t, probs)
-        next_z_t = update_token(probs)
-    score = score * diffusion_mask
+        score = score * diffusion_mask
+        update_positions = select_position_unmask(score)
+        next_z_t = update_token_unmask(probs)
+    return update_positions, next_z_t
+
+def gidd_change_based_on_model_confidence_to_change(probs, z_t, t, s, diffusion_mask, score_position, select_position, update_token):
+    score = score_position(z_t, probs) * diffusion_mask
     update_positions = select_position(score)
+    next_z_t = update_token(probs, z_t)
     return update_positions, next_z_t

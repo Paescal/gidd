@@ -91,6 +91,21 @@ def get_token_sampling_strategy(config, tokenizer):
 
 
 @torch.no_grad()
+def position_score_change_max(z_t, probs, tokenizer):
+    probs = probs.clone()
+    probs.scatter_(-1, z_t.unsqueeze(-1), 0)
+    probs[..., tokenizer.mask_token_id] = 0
+    return torch.argmax(probs, dim=-1).values
+
+@torch.no_grad()
+def position_score_change_margin(z_t, probs, tokenizer):
+    probs = probs.clone()
+    probs.scatter_(-1, z_t.unsqueeze(-1), 0)
+    probs[..., tokenizer.mask_token_id] = 0
+    top_2 = torch.topk(probs, 2, dim=-1).values
+    return top_2[..., 0] - top_2[..., 1]
+
+@torch.no_grad()
 def position_metric_MDM_max(z_t, probs, tokenizer):
     is_mask_token = (z_t == tokenizer.mask_token_id)
     probs = probs.clone()
@@ -192,6 +207,14 @@ def sample_token_change_max(probs, z_t, tokenizer, generator=None):
     probs.scatter_(-1, z_t.unsqueeze(-1), 0)
     probs[..., tokenizer.mask_token_id] = 0
     return torch.argmax(probs, dim=-1)
+
+@torch.no_grad()
+def sample_token_change_categorical(probs, z_t, tokenizer, generator=None):
+    probs = probs.clone()
+    probs.scatter_(-1, z_t.unsqueeze(-1), 0)
+    probs[..., tokenizer.mask_token_id] = 0
+    probs = probs / probs.sum(-1, keepdim=True)
+    return sample_categorical(probs, end_index=tokenizer.unk_token_id - 1, generator=generator)
 
 @torch.no_grad()
 def sample_token_MDM_max(probs, tokenizer, generator=None):
