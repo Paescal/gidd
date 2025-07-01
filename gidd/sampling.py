@@ -97,7 +97,10 @@ class GiddSampler(Sampler):
             self.sampling_strategy = get_sampling_strategy(config, tokenizer, noise_schedule=noise_schedule, min_p=min_p)
             self.config = config
 
-        def forward(self, z_t, t, s, diffusion_mask=None, puzzle_conditioning=None):
+        def forward(self, z_t, t, s, diffusion_mask=None, puzzle_conditioning=None, sequence_length_without_conditioning=0):
+            is_fully_denoised = (z_t[:, -sequence_length_without_conditioning:] != self.tokenizer.mask_token_id).all(dim=1)
+            # if is_fully_denoised.sum() != 0:
+            #     print(f"is_fully_denoised: {is_fully_denoised.sum()}")
             # print("inside gidd denoising step")
             logits = self.model(z_t, t, puzzle_conditioning=puzzle_conditioning)
             # print("got logits from model")
@@ -199,6 +202,7 @@ class GiddSampler(Sampler):
 
             update_positions, next_z_t = self.sampling_strategy(probs, z_t, t, s, diffusion_mask)
             update_positions = update_positions * diffusion_mask
+            update_positions = update_positions & ~is_fully_denoised.unsqueeze(-1)
             return torch.where(update_positions.bool(), next_z_t, z_t)
 
     def __init__(self, config, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
@@ -219,6 +223,8 @@ class GiddSampler(Sampler):
         return z_t
     
     def _do_generate_from_given(self, initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, max_length, show_progress, device, keep_history=False):
+        debug_flag = False
+
         ts = torch.linspace(0, 1, num_denoising_steps + 1, device=device).unsqueeze(-1)
         ts = (1 - 2 * self.t_eps) * ts + self.t_eps
         
@@ -227,15 +233,47 @@ class GiddSampler(Sampler):
         
         z_t = initial_z_t.clone()
         
-        history = [initial_z_t.clone()] if keep_history else None
+        history = [initial_z_t.clone()] if keep_history or debug_flag else None
         
         # print("entering sampling loop in _do_generate_from_given")
+        mask_token_id = self.sampling_step.tokenizer.mask_token_id
+        # initial_num_mask_tokens = (z_t[:, -max_length:] == mask_token_id).sum()
         for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
             # print(f"sampling step {i}")
-            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=diffusion_mask, puzzle_conditioning=puzzle_conditioning)
+            old_z_t = z_t.clone()
+            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=diffusion_mask, puzzle_conditioning=puzzle_conditioning, sequence_length_without_conditioning=max_length)
             # print(f"sampling step {i} done")
-            if keep_history:
+            
+            puzzle_string = ''
+            sample_in_batch = 1
+            changes_mask = (old_z_t[sample_in_batch] != z_t[sample_in_batch]).to(dtype=int)
+            indices_of_change = torch.tensor([i for i, val in enumerate(list(changes_mask)) if val == 1]).to(device=z_t.device)
+            num_changes = (old_z_t[sample_in_batch] != z_t[sample_in_batch]).sum().item()
+            for j in range(z_t[0, -max_length:].shape[0]):
+                puzzle_string += f"{z_t[sample_in_batch, -max_length + j].item()}"
+                if j % 9 == 8:
+                    puzzle_string += " "
+            print(f"num changes: {num_changes}")
+            print(f"changes at: {indices_of_change}({indices_of_change - max_length}), old tokens: {torch.gather(old_z_t[sample_in_batch], 0, indices_of_change)}, new tokens: {torch.gather(z_t[sample_in_batch], 0, indices_of_change)}")
+            print(f"Step {i}, Puzzle: {puzzle_string}")
+            print((f"Fully unmasked: {(z_t[sample_in_batch, -max_length:] != mask_token_id).all()}"))
+            if keep_history or debug_flag:
                 history.append(z_t.clone())
+            if (z_t[:, -max_length:] != mask_token_id).all():
+                print(f"All tokens unmasked at step {i}, stopping early.")
+                break
+        # extra_step_counter = 0
+        # mask_tokens_remaining = (z_t[:, -max_length:] == mask_token_id).sum()
+        # while (z_t[:, -max_length:] == mask_token_id).any() and extra_step_counter < 10:
+        #     extra_step_counter += 1
+        #     z_t = self.sampling_step(z_t, ts[0], ts[0], diffusion_mask=diffusion_mask, puzzle_conditioning=puzzle_conditioning, sequence_length_without_conditioning=max_length)
+        #     if keep_history or debug_flag:
+        #         history.append(z_t.clone())
+        # if extra_step_counter > 0:
+        #     print(f"{extra_step_counter} extra steps taken to unmask remaining mask tokens, before: {mask_tokens_remaining}, after: {(z_t[:, -max_length:] == mask_token_id).sum()}, of total: {initial_num_mask_tokens}")
+        #     # if debug_flag:
+        #         # history_tensor = torch.stack(history, dim=0).permute(1, 0, 2)  # (bs, num_denoising_steps + 1, max_length)
+        #         # print(f"history: {history_tensor[0, -extra_step_counter:, -max_length:]}")
         if keep_history:
             return z_t, torch.stack(history, dim=0).permute(1, 0, 2) # (bs, num_denoising_steps + 1, max_length)
         else:

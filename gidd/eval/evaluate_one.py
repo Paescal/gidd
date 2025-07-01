@@ -66,8 +66,10 @@ def main(args, sampling_config):
                 pbar.update(bs)
     accuracy = strategy_metrics['correct_solution'].item() / args.num_samples
     correctly_filled_cells = strategy_metrics['correctly_filled_cells'].item() / args.num_samples
+    not_fully_unmasked = strategy_metrics['not_fully_unmasked'].item() / args.num_samples
     print(f"accuracy={accuracy:.4f}")
     print(f"correctly_filled_cells={correctly_filled_cells:.4f}")
+    print(f"not_fully_unmasked={not_fully_unmasked:.4f}")
 
 
 if __name__ == "__main__":

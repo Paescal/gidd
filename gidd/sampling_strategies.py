@@ -37,6 +37,8 @@ def get_select_position(config, arg_name='select_position'):
             arg = config.sampling.select_position_change
         case 'select_position_unmask':
             arg = config.sampling.select_position_unmask
+        case _:
+            raise ValueError(f"Unknown argument name: {arg_name}")
 
     match arg:
         case "all":
@@ -89,7 +91,9 @@ def get_sampling_strategy(config, tokenizer, noise_schedule=None, min_p=None):
         case "gidd_vanilla_independent_change":
             return partial(gidd_vanilla_independent_change,
                            update_token=get_update_token(config, tokenizer),
-                           )
+                           tokenizer=tokenizer,
+                           noise_schedule=noise_schedule,
+                           min_p=min_p,)
         case "gidd_adaptive_score_select_update":
             return partial(gidd_adaptive_score_select_update,
                            score_position=get_score_position(config, tokenizer),
@@ -102,13 +106,13 @@ def get_sampling_strategy(config, tokenizer, noise_schedule=None, min_p=None):
                            min_p=min_p,
                            score_position=get_score_position(config, tokenizer),
                            select_position_change=get_select_position(config, arg_name='select_position_change'),
-                           select_position_umask=get_select_position(config, arg_name='select_position_unmask'),
+                           select_position_unmask=get_select_position(config, arg_name='select_position_unmask'),
                            update_token_change=get_update_token(config, tokenizer, arg_name='update_token_change'),
                            update_token_unmask=get_update_token(config, tokenizer, arg_name='update_token_unmask'),)
         case "gidd_change_based_on_model_confidence_to_change":
             return partial(gidd_change_based_on_model_confidence_to_change,
                            score_position=get_score_position(config, tokenizer),
-                           select_position=get_select_position(config, tokenizer),
+                           select_position=get_select_position(config),
                            update_token=get_update_token(config, tokenizer),)
 
 
@@ -170,6 +174,7 @@ def gidd_vanilla_split(probs, z_t, t, s, diffusion_mask, noise_schedule, update_
     alpha_s, _ = noise_schedule.get_alpha_betapi(s)
     
     update_positions = sample_positions_independently(z_t, (alpha_s - alpha_t) / (1 - alpha_t))
+    print(f"prob to update: {(alpha_s - alpha_t) / (1 - alpha_t)}")
     next_z_t = update_token(probs)
     return update_positions, next_z_t
 
@@ -199,7 +204,7 @@ def gidd_vanilla_independent_change(probs, z_t, t, s, diffusion_mask, tokenizer,
     
     probs_to_change_1m = q_st.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
     update_positions = torch.rand_like(probs_to_change_1m) > probs_to_change_1m
-    next_z_t = update_token(probs)
+    next_z_t = update_token(probs, z_t)
     return update_positions, next_z_t
 
 @torch.no_grad()
@@ -272,7 +277,7 @@ def gidd_adaptive_change_vs_unmask(probs, z_t, t, s, diffusion_mask, tokenizer, 
         score = probs_to_change * positions_to_change.to(dtype=probs_to_change.dtype)
         score = score * diffusion_mask
         update_positions = select_position_change(score)
-        next_z_t = update_token_change(probs, z_t, tokenizer)
+        next_z_t = update_token_change(probs, z_t)
     else:
         # print("Unmasking tokens")
         score = score_position(z_t, probs)

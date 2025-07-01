@@ -95,7 +95,7 @@ def position_score_change_max(z_t, probs, tokenizer):
     probs = probs.clone()
     probs.scatter_(-1, z_t.unsqueeze(-1), 0)
     probs[..., tokenizer.mask_token_id] = 0
-    return torch.argmax(probs, dim=-1).values
+    return torch.max(probs, dim=-1).values
 
 @torch.no_grad()
 def position_score_change_margin(z_t, probs, tokenizer):
@@ -199,6 +199,7 @@ def sample_categorical(probs, end_index=-1, generator=None):
     cumprobs = probs.cumsum(-1)
     cumprobs[..., end_index:] = 1 + 1e-4
     samples = torch.searchsorted(cumprobs, uniform, right=True).squeeze(-1)
+    print(f"sampled end_index: {(samples == end_index).sum().item()}")
     return samples
 
 @torch.no_grad()
@@ -336,6 +337,10 @@ def score_sudoku(samples_tokenized, diffusion_mask, solutions_tokenized, tokeniz
     mean_filled_cells_score_fraction = torch.mean(filled_cells_score / max_filled_cells_score)
 
     fully_correct_samples_fraction = torch.mean((cells_score == (seq_len)).float())
+    if fully_correct_samples_fraction is None:
+        print("fully_correct_samples_fraction is None")
+    elif fully_correct_samples_fraction == 0:
+        print("No fully correct samples found.")
 
     samples_decoded = np.array([tokenizer.decode(samples_tokenized[i], skip_special_tokens=False, clean_up_tokenization_spaces=False).split() for i in range(num_samples)])
     samples_decoded = samples_decoded.reshape((-1, sudoku_size, sudoku_size))
@@ -343,12 +348,15 @@ def score_sudoku(samples_tokenized, diffusion_mask, solutions_tokenized, tokeniz
     max_set_score = sudoku_size * sudoku_size * 3
     mean_set_score_fraction = np.mean(set_score) / max_set_score
     valid_sudoku_fraction = np.mean(np.array(set_score) == max_set_score)
+
+    not_fully_unmasked = (samples_tokenized == tokenizer.mask_token_id).any(dim=1).sum() / num_samples
     
     return {
         "correctly_filled_cells": mean_filled_cells_score_fraction,
         "correct_solution": fully_correct_samples_fraction,
         "set_score": mean_set_score_fraction,
         "valid_sudoku": valid_sudoku_fraction,
+        "not_fully_unmasked": not_fully_unmasked,
     }
 
 
