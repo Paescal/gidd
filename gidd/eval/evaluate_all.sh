@@ -230,9 +230,19 @@ export csv_file
 VENV_ACTIVATE_PATH="$( dirname "${BASH_SOURCE[0]}" )/../../.venv/bin/activate"
 source $VENV_ACTIVATE_PATH
 
+gpu_locking_dir="$( dirname "${BASH_SOURCE[0]}" )/../.."
+gpu_locking_dir="$( cd $gpu_locking_dir && pwd )"
+acquire_gpu_path="$gpu_locking_dir/aquire_gpu.sh"
+release_gpu_path="$gpu_locking_dir/release_gpu.sh"
+export acquire_gpu_path
+export release_gpu_path
+
+clear_gpu_locks_path="$gpu_locking_dir/clear_gpu_locks.sh"
+bash "$clear_gpu_locks_path"
+
 echo "Starting evaluation of combinations from $combinations_file"
 cat $combinations_file | parallel --colsep ',' -j 3 '
-    GPU=$(( ({#} - 1) % 3 + 1 ))
+    GPU=$(bash "$acquire_gpu_path")
 
     CKPT={1}
     STRATEGY={2}
@@ -250,4 +260,6 @@ cat $combinations_file | parallel --colsep ',' -j 3 '
     echo "$ACCURACY,$CORRECTLY_FILLED_CELLS,$NOT_FULLY_UNMASKED,$CKPT,$STRATEGY,\"$PARAMS_ORIGINAL\"" >> $csv_file
     echo "Output for line $(({#})):"
     echo "$OUTPUT"
+
+    bash "$release_gpu_path" $GPU
 '
