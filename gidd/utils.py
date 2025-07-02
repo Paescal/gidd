@@ -39,11 +39,11 @@ def get_lr(config, lr, step):
 def get_position_metric(config, tokenizer):
     match config.sampling.position_metric:
         case "probs_to_change":
-            return partial(position_metric_MDM_max, tokenizer=tokenizer)
+            return partial(score_mask_position_max, tokenizer=tokenizer)
         case "MDM_max":
-            return partial(position_metric_MDM_max, tokenizer=tokenizer)
+            return partial(score_mask_position_max, tokenizer=tokenizer)
         case "MDM_margin":
-            return partial(position_metric_MDM_margin, tokenizer=tokenizer)
+            return partial(score_mask_position_margin, tokenizer=tokenizer)
         case "MDM_margin_relative":
             return partial(position_metric_MDM_margin_relative, tokenizer=tokenizer)
         case "max":
@@ -91,14 +91,14 @@ def get_token_sampling_strategy(config, tokenizer):
 
 
 @torch.no_grad()
-def position_score_change_max(z_t, probs, tokenizer):
+def score_position_for_change_max(z_t, probs, tokenizer):
     probs = probs.clone()
     probs.scatter_(-1, z_t.unsqueeze(-1), 0)
     probs[..., tokenizer.mask_token_id] = 0
     return torch.max(probs, dim=-1).values
 
 @torch.no_grad()
-def position_score_change_margin(z_t, probs, tokenizer):
+def score_position_for_change_margin(z_t, probs, tokenizer):
     probs = probs.clone()
     probs.scatter_(-1, z_t.unsqueeze(-1), 0)
     probs[..., tokenizer.mask_token_id] = 0
@@ -106,7 +106,7 @@ def position_score_change_margin(z_t, probs, tokenizer):
     return top_2[..., 0] - top_2[..., 1]
 
 @torch.no_grad()
-def position_metric_MDM_max(z_t, probs, tokenizer):
+def score_mask_position_max(z_t, probs, tokenizer):
     is_mask_token = (z_t == tokenizer.mask_token_id)
     probs = probs.clone()
     probs[..., tokenizer.mask_token_id] = 0
@@ -114,7 +114,7 @@ def position_metric_MDM_max(z_t, probs, tokenizer):
     return metric * is_mask_token
 
 @torch.no_grad()
-def position_metric_MDM_margin(z_t, probs, tokenizer):
+def score_mask_position_margin(z_t, probs, tokenizer):
     is_mask_token = (z_t == tokenizer.mask_token_id)
     probs = probs.clone()
     probs[..., tokenizer.mask_token_id] = 0
@@ -199,7 +199,6 @@ def sample_categorical(probs, end_index=-1, generator=None):
     cumprobs = probs.cumsum(-1)
     cumprobs[..., end_index:] = 1 + 1e-4
     samples = torch.searchsorted(cumprobs, uniform, right=True).squeeze(-1)
-    print(f"sampled end_index: {(samples == end_index).sum().item()}")
     return samples
 
 @torch.no_grad()

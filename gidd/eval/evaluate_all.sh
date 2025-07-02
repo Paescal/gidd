@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-num_samples=64
+num_samples=6400
 num_denoising_steps=81
 batch_size=64
 min_p=0
@@ -22,25 +22,25 @@ datasets=(
     "easy"
     "hard"
 )
-score_positions=(
+score_mask_positions=(
     "MDM_max"
     "MDM_margin"
 )
-score_positions_change=(
+score_positions_for_change=(
     "change_max"
     "change_margin"
 )
 select_positions=(
     "top_k_gumbel"
 )
-select_positions_change=(
+select_positions_to_change=(
     "all"
 )
-update_tokens=(
+unmask_tokens=(
     "MDM_max"
     "MDM_categorical"
 )
-update_tokens_change=(
+change_tokens=(
     "change_max"
     "change_categorical"
 )
@@ -56,7 +56,7 @@ mkdir -p "$output_dir"
 output_dir="$( cd $output_dir && pwd )"
 combinations_file="$output_dir/combinations.txt"
 
-build_combinations_file=false
+build_combinations_file=true
 if [ $build_combinations_file = true ]; then
     > $combinations_file
     for seed in "${seeds[@]}"; do
@@ -68,60 +68,42 @@ if [ $build_combinations_file = true ]; then
                 noise=$(echo $entry | awk '{print $3}')
 
                 if [ "$proc" = "mdlm" ]; then
-                    # mdlm_vanilla # should be equivalent to gidd_vanilla_split for p_u=0
-                    for ut in "${update_tokens[@]}"; do
-                        echo "$ckpt,mdlm_vanilla,update_token=$ut $suffix" >> $combinations_file
+                    # mdlm_vanilla # should be equivalent to gidd_emulate_mdlm_vanilla for p_u=0
+                    for unmask_token in "${unmask_tokens[@]}"; do
+                        echo "$ckpt,mdlm_vanilla,unmask_token=$unmask_token $suffix" >> $combinations_file
                     done
                     
                     # mdlm_adaptive_score_select_update
-                    for sp in "${score_positions[@]}"; do
-                        for sel in "${select_positions[@]}"; do
-                            if [ "$sel" = "top_k_gumbel" ]; then
+                    for score_mask_position in "${score_mask_positions[@]}"; do
+                        for select_position in "${select_positions[@]}"; do
+                            if [ "$select_position" = "top_k_gumbel" ]; then
                                 for k in "${ks[@]}"; do
                                     for gn in "${gumbel_noise_coefficients[@]}"; do
-                                        for ut in "${update_tokens[@]}"; do
-                                            echo "$ckpt,mdlm_adaptive_score_select_update,score_position=$sp select_position=$sel update_token=$ut k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
+                                        for unmask_token in "${unmask_tokens[@]}"; do
+                                            echo "$ckpt,mdlm_adaptive_score_select_update,score_mask_position=$score_mask_position select_position=$select_position unmask_token=$unmask_token k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
                                         done
                                     done
                                 done
                             else
-                                for ut in "${update_tokens[@]}"; do
-                                    echo "$ckpt,mdlm_adaptive_score_select_update,score_position=$sp select_position=$sel update_token=$ut $suffix" >> $combinations_file
+                                for unmask_token in "${unmask_tokens[@]}"; do
+                                    echo "$ckpt,mdlm_adaptive_score_select_update,score_mask_position=$score_mask_position select_position=$select_position unmask_token=$unmask_token $suffix" >> $combinations_file
                                 done
                             fi
                         done
                     done
 
                 elif [ "$proc" = "gidd" ]; then
-                    # gidd_vanilla_original # should be equivalent to gidd_vanilla_independent_change if the token is sampled categorially, but not if max is used (except that here, unmasked tokens can cange back to masks)
-                    # Every position is updated in every step as follows:
-                    # For each position, compute the probability p_i that the new token is token i, for all i in the vocabulary. And then sample categorically from this distribution.
-                    # Note: the mask token is also in the vocabulary, thus unmasked tokens can change back to masks. Also, tokens can very well stay the same in a step, according to the probability for that.
-                    # TODO: check whether unmasked tokens can actually change back to masks
-                    echo "$ckpt,gidd_vanilla_original,$suffix" >> $combinations_file
-
-                    # gidd_vanilla_split # unmasking only, should be equivalent to gidd_vanilla_independent_change if p_u=0
+                    # gidd_emulate_mdlm_vanilla # unmasking only, should be equivalent to gidd_independent_positions_decomposed_update_distribution if p_u=0
                     # For each position independently decide to unmask the token with probability p_unmask,
                     # p_unmask depends only on the time step and is thus the same for all positions.
                     # Parameters:
                     # - The strategy to select the new token once a position decides to unmask the current token.
                     # Note: unmasked tokens never change, thus the stopping criterion is that all tokens are unmasked.
-                    for ut in "${update_tokens[@]}"; do
-                        echo "$ckpt,gidd_vanilla_split,update_token=$ut $suffix" >> $combinations_file
+                    for unmask_token in "${unmask_tokens[@]}"; do
+                        echo "$ckpt,gidd_emulate_mdlm_vanilla,unmask_token=$unmask_token $suffix" >> $combinations_file
                     done
 
-                    # gidd_vanilla_independent_change # if p_u=0, should be equivalent to gidd_vanilla_split
-                    # For each position independently decide to change the token with probability p_change,
-                    # p_change depends on the model's prediction and the current token value and can thus vary from position to position.
-                    # Parameters:
-                    # - The strategy to select the new token once a position decides to change the current token.
-                    # - The stopping criterion (e.g. no masks left)
-                    # Note: unmasked tokens can change into other tokens, but never back to masks
-                    for ut in "${update_tokens_change[@]}"; do
-                        echo "$ckpt,gidd_vanilla_independent_change,update_token=$ut $suffix" >> $combinations_file
-                    done
-                    
-                    # gidd_adaptive_score_select_update
+                    # gidd_emulate_mdlm_adaptive_score_select_update
                     # For each position compute a score based on the model's prediction.
                     # Based on the scores of the positions, select a subset of positions to update.
                     # Update the selected positions according to your strategy.
@@ -130,25 +112,43 @@ if [ $build_combinations_file = true ]; then
                     # - The strategy to select the positions to update based on the scores.
                     # - The strategy to select the new token once a position is selected.
                     # Note: current implementation does not allow tokens to change once unmasked (designed for p_u=0, should be equivalent to mdlm_adaptive_score_select_update)
-                    for sp in "${score_positions[@]}"; do
-                        for sel in "${select_positions[@]}"; do
-                            if [ "$sel" = "top_k_gumbel" ]; then
+                    for score_mask_position in "${score_mask_positions[@]}"; do
+                        for select_position in "${select_positions[@]}"; do
+                            if [ "$select_position" = "top_k_gumbel" ]; then
                                 for k in "${ks[@]}"; do
                                     for gn in "${gumbel_noise_coefficients[@]}"; do
-                                        for ut in "${update_tokens[@]}"; do
-                                            echo "$ckpt,gidd_adaptive_score_select_update,score_position=$sp select_position=$sel update_token=$ut k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
+                                        for unmask_token in "${unmask_tokens[@]}"; do
+                                            echo "$ckpt,gidd_emulate_mdlm_adaptive_score_select_update,score_mask_position=$score_mask_position select_position=$select_position unmask_token=$unmask_token k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
                                         done
                                     done
                                 done
                             else
-                                for ut in "${update_tokens[@]}"; do
-                                    echo "$ckpt,gidd_adaptive_score_select_update,score_position=$sp select_position=$sel update_token=$ut $suffix" >> $combinations_file
+                                for unmask_token in "${unmask_tokens[@]}"; do
+                                    echo "$ckpt,gidd_emulate_mdlm_adaptive_score_select_update,score_mask_position=$score_mask_position select_position=$select_position unmask_token=$unmask_token $suffix" >> $combinations_file
                                 done
                             fi
                         done
                     done
 
-                    # gidd_adaptive_change_vs_unmask
+                    # gidd_original # should be equivalent to gidd_independent_positions_decomposed_update_distribution if the token is sampled categorially, but not if max is used (except that here, unmasked tokens can cange back to masks)
+                    # Every position is updated in every step as follows:
+                    # For each position, compute the probability p_i that the new token is token i, for all i in the vocabulary. And then sample categorically from this distribution.
+                    # Note: the mask token is also in the vocabulary, thus unmasked tokens can change back to masks. Also, tokens can very well stay the same in a step, according to the probability for that.
+                    # TODO: check whether unmasked tokens can actually change back to masks
+                    echo "$ckpt,gidd_original,$suffix" >> $combinations_file
+                    
+                    # gidd_independent_positions_decomposed_update_distribution # if p_u=0, should be equivalent to gidd_emulate_mdlm_vanilla
+                    # For each position independently decide to change the token with probability p_change,
+                    # p_change depends on the model's prediction and the current token value and can thus vary from position to position.
+                    # Parameters:
+                    # - The strategy to select the new token once a position decides to change the current token.
+                    # - The stopping criterion (e.g. no masks left)
+                    # Note: unmasked tokens can change into other tokens, but never back to masks
+                    for change_token in "${change_tokens[@]}"; do
+                        echo "$ckpt,gidd_independent_positions_decomposed_update_distribution,change_token=$change_token $suffix" >> $combinations_file
+                    done
+
+                    # gidd_selected_positions_decomposed_update_distribution
                     # For each position compute the probability to change the token based on the model's prediction.
                     # Also compute the probability to unmask at the current time step. This does not depend on the position.
                     # Check if there is at least one position where the probability to change is greater than the probability to unmask.
@@ -159,23 +159,23 @@ if [ $build_combinations_file = true ]; then
                     # - "unmask_strategy", potentially composed of a score function for each masked position, strategy to select the positions to unmask, and strategy to select the new token once a position is selected.
                     # Note: the "change_strategy" should not allow unmasked tokens to turn back into masks.
                     if (( $(echo "$noise > 0" | bc -l) )); then
-                        for sp in "${score_positions[@]}"; do
-                            for sel_change in "${select_positions_change[@]}"; do
+                        for score_mask_position in "${score_mask_positions[@]}"; do
+                            for sel_change in "${select_positions_to_change[@]}"; do
                                 for sel_unmask in "${select_positions[@]}"; do
                                     if [ "$sel_unmask" = "top_k_gumbel" ]; then
                                         for k in "${ks[@]}"; do
                                             for gn in "${gumbel_noise_coefficients[@]}"; do
-                                                for ut_change in "${update_tokens_change[@]}"; do
-                                                    for ut_unmask in "${update_tokens[@]}"; do
-                                                        echo "$ckpt,gidd_adaptive_change_vs_unmask,score_position=$sp select_position_change=$sel_change select_position_unmask=$sel_unmask update_token_change=$ut_change update_token_unmask=$ut_unmask k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
+                                                for change_token in "${change_tokens[@]}"; do
+                                                    for unmask_token in "${unmask_tokens[@]}"; do
+                                                        echo "$ckpt,gidd_selected_positions_decomposed_update_distribution,score_mask_position=$score_mask_position select_position_change=$sel_change select_position_unmask=$sel_unmask change_token=$change_token unmask_token=$unmask_token k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
                                                     done
                                                 done
                                             done
                                         done
                                     else
-                                        for ut_change in "${update_tokens_change[@]}"; do
-                                            for ut_unmask in "${update_tokens[@]}"; do
-                                                echo "$ckpt,gidd_adaptive_change_vs_unmask,score_position=$sp select_position_change=$sel_change select_position_unmask=$sel_unmask update_token_change=$ut_change update_token_unmask=$ut_unmask $suffix" >> $combinations_file
+                                        for change_token in "${change_tokens[@]}"; do
+                                            for unmask_token in "${unmask_tokens[@]}"; do
+                                                echo "$ckpt,gidd_selected_positions_decomposed_update_distribution,score_mask_position=$score_mask_position select_position_change=$sel_change select_position_unmask=$sel_unmask change_token=$change_token unmask_token=$unmask_token $suffix" >> $combinations_file
                                             done
                                         done
                                     fi
@@ -194,19 +194,19 @@ if [ $build_combinations_file = true ]; then
                     # - The strategy to select the positions to update based on the scores.
                     # - The strategy to select the new token once a position is selected.
                     if (( $(echo "$noise > 0" | bc -l) )); then
-                        for sp in "${score_positions_change[@]}"; do
-                            for sel in "${select_positions[@]}"; do
-                                if [ "$sel" = "top_k_gumbel" ]; then
+                        for score_position_for_change in "${score_positions_for_change[@]}"; do
+                            for select_position in "${select_positions[@]}"; do
+                                if [ "$select_position" = "top_k_gumbel" ]; then
                                     for k in "${ks[@]}"; do
                                         for gn in "${gumbel_noise_coefficients[@]}"; do
-                                            for ut in "${update_tokens_change[@]}"; do
-                                                echo "$ckpt,gidd_change_based_on_model_confidence_to_change,score_position=$sp select_position=$sel update_token=$ut k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
+                                            for change_token in "${change_tokens[@]}"; do
+                                                echo "$ckpt,gidd_change_based_on_model_confidence_to_change,score_position_for_change=$score_position_for_change select_position=$select_position change_token=$change_token k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
                                             done
                                         done
                                     done
                                 else
-                                    for ut in "${update_tokens_change[@]}"; do
-                                        echo "$ckpt,gidd_change_based_on_model_confidence_to_change,score_position=$sp select_position=$sel update_token=$ut $suffix" >> $combinations_file
+                                    for change_token in "${change_tokens[@]}"; do
+                                        echo "$ckpt,gidd_change_based_on_model_confidence_to_change,score_position_for_change=$score_position_for_change select_position=$select_position change_token=$change_token $suffix" >> $combinations_file
                                     done
                                 fi
                             done

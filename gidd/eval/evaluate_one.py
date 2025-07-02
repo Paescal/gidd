@@ -86,13 +86,13 @@ if __name__ == "__main__":
     
     sampling_argument_group = parser.add_argument_group('Sampling arguments')
     sampling_argument_group.add_argument('--strategy', type=str, required=True, help='Sampling strategy to evaluate')
-    sampling_argument_group.add_argument('--score_position', type=str, default=None, help='Scoring function for updating a position')
+    sampling_argument_group.add_argument('--score_mask_position', type=str, default=None, help='Scoring function for unmasking a position')
+    sampling_argument_group.add_argument('--score_position_for_change', type=str, default=None, help='Scoring function for changing the token at a position')
     sampling_argument_group.add_argument('--select_position', type=str, default=None, help='Sampling strategy for selecting a position')
     sampling_argument_group.add_argument('--select_position_change', type=str, default=None, help='Sampling strategy for selecting a position when changing an unmasked token')
     sampling_argument_group.add_argument('--select_position_unmask', type=str, default=None, help='Sampling strategy for selecting a position when unmasking a token')
-    sampling_argument_group.add_argument('--update_token', type=str, default=None, help='Sampling strategy for updating a token')
-    sampling_argument_group.add_argument('--update_token_change', type=str, default=None, help='Sampling strategy for updating a token when changing an unmasked token')
-    sampling_argument_group.add_argument('--update_token_unmask', type=str, default=None, help='Sampling strategy for updating a token when unmasking a token')
+    sampling_argument_group.add_argument('--change_token', type=str, default=None, help='Sampling strategy for updating a token when changing an unmasked token')
+    sampling_argument_group.add_argument('--unmask_token', type=str, default=None, help='Sampling strategy for updating a token when unmasking a token')
     sampling_argument_group.add_argument('--k', type=int, default=None, help='K for top-k gumbel sampling')
     sampling_argument_group.add_argument('--gumbel_noise_coefficient', type=float, default=None, help='Gumbel noise coefficient for top-k gumbel sampling')
 
@@ -101,13 +101,13 @@ if __name__ == "__main__":
     sampling_config = dict_to_namespace({
         "sampling": {
             "strategy": args.strategy,
-            "score_position": args.score_position,
+            "score_mask_position": args.score_mask_position,
+            "score_position_for_change": args.score_position_for_change,
             "select_position": args.select_position,
             "select_position_change": args.select_position_change,
             "select_position_unmask": args.select_position_unmask,
-            "update_token": args.update_token,
-            "update_token_change": args.update_token_change,
-            "update_token_unmask": args.update_token_unmask,
+            "change_token": args.change_token,
+            "unmask_token": args.unmask_token,
             "k": args.k,
             "gumbel_noise_coefficient": args.gumbel_noise_coefficient
         }

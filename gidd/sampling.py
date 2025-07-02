@@ -97,110 +97,17 @@ class GiddSampler(Sampler):
             self.sampling_strategy = get_sampling_strategy(config, tokenizer, noise_schedule=noise_schedule, min_p=min_p)
             self.config = config
 
-        def forward(self, z_t, t, s, diffusion_mask=None, puzzle_conditioning=None, sequence_length_without_conditioning=0):
+        def forward(self, z_t, t, s, i=None, diffusion_mask=None, puzzle_conditioning=None, sequence_length_without_conditioning=0):
             is_fully_denoised = (z_t[:, -sequence_length_without_conditioning:] != self.tokenizer.mask_token_id).all(dim=1)
             # if is_fully_denoised.sum() != 0:
             #     print(f"is_fully_denoised: {is_fully_denoised.sum()}")
             # print("inside gidd denoising step")
             logits = self.model(z_t, t, puzzle_conditioning=puzzle_conditioning)
-            # print("got logits from model")
-            # print(f"logits: {logits[..., self.tokenizer.mask_token_id - 1]}")
             logits[..., self.tokenizer.mask_token_id:] = -1e6
             probs = logits.softmax(-1)
 
-            # if self.config.sampling.position_sampling_strategy == "all" or self.config.sampling.position_sampling_strategy == "independent" or self.config.sampling.position_metric == "probs_to_change":
-            #     # if i > 0:
-            #     # print("getting probs at t and s")
-            #     q_s = self.noise_schedule.probs_at_t(probs, s)
-            #     q_t = self.noise_schedule.probs_at_t(probs, t)
-            #     q_zt = q_t.gather(-1, z_t.unsqueeze(-1))
-
-            #     # print("getting alpha and beta pi at t and s")
-            #     alpha_t, beta_pi_t = self.noise_schedule.get_alpha_betapi(t)
-            #     alpha_s, beta_pi_s = self.noise_schedule.get_alpha_betapi(s)
-
-            #     alpha_ts = alpha_t / alpha_s
-            #     beta_pi_ts = beta_pi_t - alpha_t / alpha_s * beta_pi_s
-
-            #     # vz_t = F.one_hot(z_t, num_classes=len(self.tokenizer))
-            #     vocab_size_architecturally = len(self.tokenizer)
-            #     vz_t = F.one_hot(z_t, num_classes=vocab_size_architecturally)
-            #     beta_pi_ts_at_zt = beta_pi_ts.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
-            #     q_ts = (alpha_ts * vz_t + beta_pi_ts_at_zt)
-
-            #     q_st = q_ts * q_s / q_zt
-            #     # print(f"shapes: q_st: {q_st.shape}, q_ts: {q_ts.shape}, q_s: {q_s.shape}, q_zt: {q_zt.shape}, beta_pi_ts_at_zt: {beta_pi_ts_at_zt.shape}, alpha_ts: {alpha_ts.shape}, t: {t.shape}")
-            #     # print(f"q_st: {q_st[0, -2, self.tokenizer.mask_token_id]}, q_ts: {q_ts[0, -2, self.tokenizer.mask_token_id]}, q_s: {q_s[0, -2, self.tokenizer.mask_token_id]}, q_zt: {q_zt[0, -2, 0]}, beta_pi_ts_at_zt: {beta_pi_ts_at_zt[0, -2, 0]}")
-                
-            #     if self.min_p > 0.0:
-            #         is_small = (q_st < self.min_p).float()
-            #         q_st = (1 - is_small) * q_st
-            #         q_st = q_st / q_st.sum(-1, keepdim=True)
-            #     if self.config.sampling.position_sampling_strategy == "all":
-            #         probs = q_st
-                    
-            # if self.config.sampling.position_metric == "probs_to_change":
-            #     q_st_at_zt = q_st.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
-            #     # token_start = 81
-            #     # token_end = 86
-            #     # print(f"q_st: {q_st[0, token, :10]}")
-            #     # print(f"q_st_at_zt: {q_st_at_zt[0, token:token+5]}\nz_t: {z_t[0, token:token+5]}")
-                
-            #     # Calculate the probability to unmask a token,
-            #     # compare it with the probabilities to change a token.
-            #     # If there exists a token which is more likely to change than it is likely to unmask a token, then change it.
-            #     # Otherwise unmask a token based on the current criteria (position_metric, e.g. max confidence, etc.)
-                
-            #     # P(masked s) = P(masked s | unmasked t) * P(unmasked t) + P(masked s | masked t) * P(masked t), P(masked s | unmasked t) = 0
-            #     # -> P(masked s | masked t) = P(masked s) / P(masked t)
-            #     # -> P(unmasked s | masked t) = 1 - P(masked s) / P(masked t)
-
-            #     # P(masked s | masked t) = P(masked t | masked s) * P(masked s) / P(masked t), P(masked t | masked s) = 1
-            #     # -> P(masked s | masked t) = P(masked s) / P(masked t)
-            #     probs_to_change = 1 - q_st_at_zt
-            #     beta_pi_s_at_mask = beta_pi_s[..., self.tokenizer.mask_token_id]
-            #     beta_pi_t_at_mask = beta_pi_t[..., self.tokenizer.mask_token_id]
-            #     probs_to_not_unmask = beta_pi_s_at_mask / beta_pi_t_at_mask
-            #     probs_to_not_unmask = probs_to_not_unmask * (alpha_t.squeeze(-1) / alpha_s.squeeze(-1) + beta_pi_t_at_mask - alpha_t.squeeze(-1) / alpha_s.squeeze(-1) * beta_pi_s_at_mask)
-            #     probs_to_unmask = 1 - probs_to_not_unmask
-            #     # print(f"Shape of probs to not unmask: {probs_to_not_unmask.shape}, beta_pi_s_at_mask: {beta_pi_s_at_mask.shape}")
-            #     # print(f"probs to not unmask: {1 - probs_to_unmask[0]} ( = {beta_pi_s_at_mask.item()} / {beta_pi_t_at_mask.item()})")
-            #     # print(f"probs to not change: {q_st_at_zt[0, token_start:token_end]}")
-            #     # print(f"q_ts factor: {(alpha_t / alpha_s + beta_pi_t_at_mask - alpha_t / alpha_s * beta_pi_s_at_mask)[0, 0].item()}")
-            #     probs_to_unmask = probs_to_unmask.unsqueeze(-1).expand_as(probs_to_change)
-
-            #     probs_to_change = probs_to_change * diffusion_mask
-            #     probs_to_unmask = probs_to_unmask * diffusion_mask
-
-            #     positions_to_change = (probs_to_change > probs_to_unmask + 1e-6)
-            #     # print(f"z_t: {z_t[0, token_start:token_end]}")
-            #     # print(f"probs_to_change: {probs_to_change[0, token_start:token_end]}")
-            #     # print(f"probs_to_unmask: {probs_to_unmask[0, token_start:token_end]}")
-
-            #     if positions_to_change.any():
-            #         # print("Changing tokens")
-            #         # print(f"Positions to change: {positions_to_change[0, token_start:token_end]}")
-            #         metric = probs_to_change * positions_to_change.to(dtype=probs_to_change.dtype)
-            #     else:
-            #         # print("Unmasking tokens")
-            #         metric = self.position_metric(z_t, probs)
-            # else:
-            #     metric = self.position_metric(z_t, probs)
-            # metric = metric * diffusion_mask
-
-            # if self.config.sampling.position_sampling_strategy == "independent":
-            #     update_positions = self.position_sampling_strategy(metric, (alpha_s - alpha_t) / (1 - alpha_t))
-            # else:
-            #     update_positions = self.position_sampling_strategy(metric)
-            # update_positions = update_positions * diffusion_mask
-            # # print(f"update_positions: {update_positions[0, token:token+5]}")
-            
-            # if self.config.sampling.token_sampling_strategy == "change_token_max":
-            #     next_z_t = self.token_sampling_strategy(probs, z_t)
-            # else:
-            #     next_z_t = self.token_sampling_strategy(probs)
-
-            update_positions, next_z_t = self.sampling_strategy(probs, z_t, t, s, diffusion_mask)
+            update_positions, next_z_t = self.sampling_strategy(probs, z_t, t, s, i, diffusion_mask)
+            # update_positions, next_z_t = self.sampling_strategy(probs, z_t, t, s, diffusion_mask)
             update_positions = update_positions * diffusion_mask
             update_positions = update_positions & ~is_fully_denoised.unsqueeze(-1)
             return torch.where(update_positions.bool(), next_z_t, z_t)
@@ -240,28 +147,30 @@ class GiddSampler(Sampler):
         # initial_num_mask_tokens = (z_t[:, -max_length:] == mask_token_id).sum()
         for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
             # print(f"sampling step {i}")
-            old_z_t = z_t.clone()
-            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=diffusion_mask, puzzle_conditioning=puzzle_conditioning, sequence_length_without_conditioning=max_length)
+            # old_z_t = z_t.clone()
+            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], i=i, diffusion_mask=diffusion_mask, puzzle_conditioning=puzzle_conditioning, sequence_length_without_conditioning=max_length)
             # print(f"sampling step {i} done")
             
-            puzzle_string = ''
-            sample_in_batch = 1
-            changes_mask = (old_z_t[sample_in_batch] != z_t[sample_in_batch]).to(dtype=int)
-            indices_of_change = torch.tensor([i for i, val in enumerate(list(changes_mask)) if val == 1]).to(device=z_t.device)
-            num_changes = (old_z_t[sample_in_batch] != z_t[sample_in_batch]).sum().item()
-            for j in range(z_t[0, -max_length:].shape[0]):
-                puzzle_string += f"{z_t[sample_in_batch, -max_length + j].item()}"
-                if j % 9 == 8:
-                    puzzle_string += " "
-            print(f"num changes: {num_changes}")
-            print(f"changes at: {indices_of_change}({indices_of_change - max_length}), old tokens: {torch.gather(old_z_t[sample_in_batch], 0, indices_of_change)}, new tokens: {torch.gather(z_t[sample_in_batch], 0, indices_of_change)}")
-            print(f"Step {i}, Puzzle: {puzzle_string}")
-            print((f"Fully unmasked: {(z_t[sample_in_batch, -max_length:] != mask_token_id).all()}"))
+            # puzzle_string = ''
+            # sample_in_batch = 31
+            # changes_mask = (old_z_t[sample_in_batch] != z_t[sample_in_batch]).to(dtype=int)
+            # indices_of_change = torch.tensor([i for i, val in enumerate(list(changes_mask)) if val == 1]).to(device=z_t.device)
+            # num_changes = (old_z_t[sample_in_batch] != z_t[sample_in_batch]).sum().item()
+            # for j in range(z_t[0, -max_length:].shape[0]):
+            #     puzzle_string += f"{z_t[sample_in_batch, -max_length + j].item()}"
+            #     if j % 9 == 8:
+            #         puzzle_string += " "
+            # print(f"num changes: {num_changes}")
+            # print(f"changes at: {indices_of_change}({indices_of_change - max_length}), old tokens: {torch.gather(old_z_t[sample_in_batch], 0, indices_of_change)}, new tokens: {torch.gather(z_t[sample_in_batch], 0, indices_of_change)}")
+            # print(f"Step {i}, Puzzle: {puzzle_string}")
+            # print((f"Fully unmasked: {(z_t[sample_in_batch, -max_length:] != mask_token_id).all()}"))
             if keep_history or debug_flag:
                 history.append(z_t.clone())
             if (z_t[:, -max_length:] != mask_token_id).all():
-                print(f"All tokens unmasked at step {i}, stopping early.")
+                # print(f"All tokens unmasked at step {i}, stopping early.")
                 break
+        # print(f"fully unmasked samples: {(z_t[:, -max_length:] != mask_token_id).all(dim=1)}")
+        
         # extra_step_counter = 0
         # mask_tokens_remaining = (z_t[:, -max_length:] == mask_token_id).sum()
         # while (z_t[:, -max_length:] == mask_token_id).any() and extra_step_counter < 10:
