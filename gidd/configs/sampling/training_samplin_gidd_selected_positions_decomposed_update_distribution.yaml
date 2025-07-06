@@ -1,0 +1,10 @@
+"strategy": gidd_selected_positions_decomposed_update_distribution
+"score_mask_position": MDM_margin
+"score_position_for_change": null
+"select_position": top_k_gumbel
+"select_position_change": all
+"select_position_unmask": top_k_gumbel
+"change_token": change_max
+"unmask_token": MDM_max
+"k": 1
+"gumbel_noise_coefficient": 0
