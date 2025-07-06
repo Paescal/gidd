@@ -85,8 +85,8 @@ def parse_shah_dataset():
     ds_easy_test.save_to_disk(f"gidd/datasets/sudoku_shah/easy/test")
 
 
-def build_sudoku_shah(parse_shah_dataset=True):
-    if parse_shah_dataset:
+def build_sudoku_shah(parse_shah_dataset_flag=True):
+    if parse_shah_dataset_flag:
         parse_shah_dataset()
 
     ds_easy_train = load_from_disk(f"gidd/datasets/sudoku_shah/easy/train")
@@ -118,5 +118,8 @@ def build_sudoku_shah(parse_shah_dataset=True):
 
 
 # build_sudoku_dataset()
+
+# The following requires gidd/datasets/sudoku_shah/sudoku-train-data.npy and gidd/datasets/sudoku_shah/sudoku-test-data.npy to be present
 # parse_shah_dataset()
-# build_sudoku_shah(parse_shah_dataset=False)
+# build_sudoku_shah(parse_shah_dataset_flag=False)
+# build_sudoku_shah()
