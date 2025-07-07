@@ -1,3 +1,4 @@
+num_denoising_steps: 81
 "strategy": gidd_selected_positions_decomposed_update_distribution
 "score_mask_position": MDM_margin
 "score_position_for_change": null
