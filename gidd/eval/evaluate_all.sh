@@ -263,3 +263,6 @@ cat $combinations_file | parallel --colsep ',' -j 3 '
 
     bash "$release_gpu_path" $GPU
 '
+
+aggregate_results_over_seeds_py="$( cd $( dirname "${BASH_SOURCE[0]}" ) && pwd )/aggregate_results_over_seeds.py"
+python3 $aggregate_results_over_seeds_py --csv_file $csv_file
