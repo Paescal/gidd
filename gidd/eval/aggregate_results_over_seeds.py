@@ -24,7 +24,7 @@ def main(args):
     with open(csv_file, newline='') as f:
         reader = csv.DictReader(f, fieldnames=[
             'accuracy', 'correctly_filled_cells', 'not_fully_unmasked',
-            'checkpoint', 'strategy', 'params'
+            'checkpoint', 'strategy', 'params', 'history'
         ])
         reader.__next__()  # Skip header row
         for row in reader:

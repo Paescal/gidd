@@ -8,6 +8,7 @@ import tqdm.auto as tqdm
 from gidd.diffusion_process import NoiseSchedule
 from gidd.utils import get_position_metric, get_position_sampling_strategy, get_token_sampling_strategy, sample_categorical
 from gidd.sampling_strategies import get_sampling_strategy
+from gidd.self_correction_strategies import self_correction_original, self_correction_max
 
 class Sampler(nn.Module):
     def __init__(self, model, tokenizer, noise_schedule: NoiseSchedule, t_eps: float = 1e-4):
@@ -130,8 +131,6 @@ class GiddSampler(Sampler):
         return z_t
     
     def _do_generate_from_given(self, initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, max_length, show_progress, device, keep_history=False):
-        debug_flag = False
-
         ts = torch.linspace(0, 1, num_denoising_steps + 1, device=device).unsqueeze(-1)
         ts = (1 - 2 * self.t_eps) * ts + self.t_eps
         
@@ -140,7 +139,7 @@ class GiddSampler(Sampler):
         
         z_t = initial_z_t.clone()
         
-        history = [initial_z_t.clone()] if keep_history or debug_flag else None
+        history = [initial_z_t.clone()] if keep_history else None
         
         # print("entering sampling loop in _do_generate_from_given")
         mask_token_id = self.sampling_step.tokenizer.mask_token_id
@@ -164,11 +163,26 @@ class GiddSampler(Sampler):
             # print(f"changes at: {indices_of_change}({indices_of_change - max_length}), old tokens: {torch.gather(old_z_t[sample_in_batch], 0, indices_of_change)}, new tokens: {torch.gather(z_t[sample_in_batch], 0, indices_of_change)}")
             # print(f"Step {i}, Puzzle: {puzzle_string}")
             # print((f"Fully unmasked: {(z_t[sample_in_batch, -max_length:] != mask_token_id).all()}"))
-            if keep_history or debug_flag:
+            if keep_history:
                 history.append(z_t.clone())
             if (z_t[:, -max_length:] != mask_token_id).all():
                 # print(f"All tokens unmasked at step {i}, stopping early.")
                 break
+        
+        self_correction = self.sampling_step.config.sampling.self_correction
+        if self_correction == "none":
+            history_self_correction = []
+        elif self_correction == "original":
+            temp = 1
+            tokens_per_step = 1
+            z_t, history_self_correction = self_correction_original(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, keep_history=keep_history)
+        elif self_correction == "max":
+            temp = 1
+            tokens_per_step = 1
+            z_t, history_self_correction = self_correction_max(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, keep_history=keep_history)
+        
+        if keep_history:
+            history = history + history_self_correction
         # print(f"fully unmasked samples: {(z_t[:, -max_length:] != mask_token_id).all(dim=1)}")
         
         # extra_step_counter = 0

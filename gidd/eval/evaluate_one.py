@@ -12,6 +12,7 @@ from gidd.utils import parse_dtype, score_sudoku
 from gidd.checkpoints import load_checkpoint
 from gidd.data import _get_dataloader, default_collator
 from gidd.sampling import get_sampler
+from gidd.eval.visualize import history_to_str
 from datasets import load_from_disk
 from types import SimpleNamespace
 
@@ -52,14 +53,15 @@ def main(args, sampling_config):
                 diffusion_mask = batch['diffusion_mask']
                 solutions_tokenized = batch['input_ids']
                 if ckpt_config.training.use_diffusion_mask:
-                    samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, num_denoising_steps=args.num_denoising_steps, decode=False, show_progress=False, keep_history=False)
-                try:
-                    if ckpt_config.model.puzzle_conditioning == 'in_context':
-                            samples = samples[..., -ckpt_config.model.max_seq_len:]
-                            diffusion_mask = diffusion_mask[..., -ckpt_config.model.max_seq_len:]
-                            solutions_tokenized = solutions_tokenized[..., -ckpt_config.model.max_seq_len:]
-                except:
-                    pass
+                    samples, history = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, num_denoising_steps=args.num_denoising_steps, decode=False, show_progress=False, keep_history=(i == 0))
+                    if i == 0:
+                        history_solution = solutions_tokenized
+                
+                if ckpt_config.model.puzzle_conditioning == 'in_context':
+                        samples = samples[..., -ckpt_config.model.max_seq_len:]
+                        diffusion_mask = diffusion_mask[..., -ckpt_config.model.max_seq_len:]
+                        solutions_tokenized = solutions_tokenized[..., -ckpt_config.model.max_seq_len:]
+                
                 batch_metrics = score_sudoku(samples.cpu(), diffusion_mask, solutions_tokenized, ckpt_tokenizer)
                 for k, v in batch_metrics.items():
                     strategy_metrics[k] = strategy_metrics.get(k, 0) + v * bs
@@ -70,6 +72,12 @@ def main(args, sampling_config):
     print(f"accuracy={accuracy:.4f}")
     print(f"correctly_filled_cells={correctly_filled_cells:.4f}")
     print(f"not_fully_unmasked={not_fully_unmasked:.4f}")
+    history = history.cpu()[0]
+    history_solution = history_solution.cpu()[0]
+    if ckpt_config.model.puzzle_conditioning == 'in_context':
+        history = history[:, -ckpt_config.model.max_seq_len:]
+        history_solution = history_solution[-ckpt_config.model.max_seq_len:]
+    print(history_to_str(history, history_solution))
 
 
 if __name__ == "__main__":
@@ -95,6 +103,7 @@ if __name__ == "__main__":
     sampling_argument_group.add_argument('--unmask_token', type=str, default=None, help='Sampling strategy for updating a token when unmasking a token')
     sampling_argument_group.add_argument('--k', type=int, default=None, help='K for top-k gumbel sampling')
     sampling_argument_group.add_argument('--gumbel_noise_coefficient', type=float, default=None, help='Gumbel noise coefficient for top-k gumbel sampling')
+    sampling_argument_group.add_argument('--self_correction', type=str, default="none", help='Self-correction strategy to use')
 
     args = parser.parse_args()
 
@@ -109,7 +118,8 @@ if __name__ == "__main__":
             "change_token": args.change_token,
             "unmask_token": args.unmask_token,
             "k": args.k,
-            "gumbel_noise_coefficient": args.gumbel_noise_coefficient
+            "gumbel_noise_coefficient": args.gumbel_noise_coefficient,
+            "self_correction": args.self_correction
         }
     })
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-num_samples=6400
+num_samples=64
 num_denoising_steps=81
 batch_size=64
 min_p=0
@@ -9,36 +9,36 @@ compile_torch=0
 
 seeds=(
     "1"
-    "2"
-    "3"
+    # "2"
+    # "3"
 )
 checkpoints=(
-    "2025-06-18/12-51-55/checkpoints/latest/ gidd 0"
+    # "2025-06-18/12-51-55/checkpoints/latest/ gidd 0"
     "2025-06-13/15-04-32/checkpoints/latest/ gidd 0.2"
-    "2025-06-11/18-28-57/checkpoints/latest/ mdlm -"
-    "2025-06-01/17-31-45/checkpoints/latest/ gidd 0"
+    # "2025-06-11/18-28-57/checkpoints/latest/ mdlm -"
+    # "2025-06-01/17-31-45/checkpoints/latest/ gidd 0"
 )
 datasets=(
     "easy"
-    "hard"
+    # "hard"
 )
 strategies=(
-    "mdlm_vanilla"
-    "mdlm_adaptive_score_select_update"
-    "gidd_emulate_mdlm_vanilla"
+    # "mdlm_vanilla"
+    # "mdlm_adaptive_score_select_update"
+    # "gidd_emulate_mdlm_vanilla"
     "gidd_emulate_mdlm_adaptive_score_select_update"
-    "gidd_original"
-    "gidd_independent_positions_decomposed_update_distribution"
-    "gidd_selected_positions_decomposed_update_distribution"
-    "gidd_change_based_on_model_confidence_to_change"
+    # "gidd_original"
+    # "gidd_independent_positions_decomposed_update_distribution"
+    # "gidd_selected_positions_decomposed_update_distribution"
+    # "gidd_change_based_on_model_confidence_to_change"
 )
 score_mask_positions=(
     "MDM_max"
-    "MDM_margin"
+    # "MDM_margin"
 )
 score_positions_for_change=(
     "change_max"
-    "change_margin"
+    # "change_margin"
 )
 select_positions=(
     "top_k_gumbel"
@@ -48,11 +48,11 @@ select_positions_to_change=(
 )
 unmask_tokens=(
     "MDM_max"
-    "MDM_categorical"
+    # "MDM_categorical"
 )
 change_tokens=(
     "change_max"
-    "change_categorical"
+    # "change_categorical"
 )
 ks=(
     "1"
@@ -69,7 +69,7 @@ self_correction_strategies=(
 output_dir="$( dirname "${BASH_SOURCE[0]}" )/../../outputs/evaluate_all"
 mkdir -p "$output_dir"
 output_dir="$( cd $output_dir && pwd )"
-combinations_file="$output_dir/combinations.txt"
+combinations_file="$output_dir/combinations_debug.txt"
 
 build_combinations_file=true
 if [ $build_combinations_file = true ]; then
@@ -251,7 +251,7 @@ if [ $build_combinations_file = true ]; then
 fi
 # cat $combinations_file
 
-csv_file="$output_dir/results.csv"
+csv_file="$output_dir/results_debug.csv"
 echo "accuracy,correctly_filled_cells,not_fully_unmasked,checkpoint,strategy,params,history" > $csv_file
 
 evaluate_one_py="$( cd $( dirname "${BASH_SOURCE[0]}" ) && pwd )/evaluate_one.py"
