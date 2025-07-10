@@ -9,3 +9,4 @@ num_denoising_steps: 81
 "unmask_token": MDM_max
 "k": 1
 "gumbel_noise_coefficient": 0
+"self_correction": "none"
