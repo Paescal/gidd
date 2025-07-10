@@ -19,8 +19,8 @@ checkpoints=(
     # "2025-06-01/17-31-45/checkpoints/latest/ gidd 0"
 )
 datasets=(
-    "easy"
-    # "hard"
+    # "easy"
+    "hard"
 )
 strategies=(
     # "mdlm_vanilla"
@@ -29,8 +29,8 @@ strategies=(
     "gidd_emulate_mdlm_adaptive_score_select_update"
     # "gidd_original"
     # "gidd_independent_positions_decomposed_update_distribution"
-    # "gidd_selected_positions_decomposed_update_distribution"
-    # "gidd_change_based_on_model_confidence_to_change"
+    "gidd_selected_positions_decomposed_update_distribution"
+    "gidd_change_based_on_model_confidence_to_change"
 )
 score_mask_positions=(
     "MDM_max"
@@ -61,9 +61,9 @@ gumbel_noise_coefficients=(
     "0"
 )
 self_correction_strategies=(
-    "none"
+    # "none"
     "original"
-    "max"
+    # "max"
 )
 
 output_dir="$( dirname "${BASH_SOURCE[0]}" )/../../outputs/evaluate_all"
