@@ -106,6 +106,22 @@ def score_position_for_change_margin(z_t, probs, tokenizer):
     return top_2[..., 0] - top_2[..., 1]
 
 @torch.no_grad()
+def score_position_for_keep_where_confident_max(z_t, probs, tokenizer):
+    probs = probs.clone()
+    probs[..., tokenizer.mask_token_id] = 0
+    values, indices = torch.max(probs, dim=-1)
+    return torch.where(z_t == indices, 0, values)
+
+@torch.no_grad()
+def score_position_for_keep_where_confident_margin(z_t, probs, tokenizer):
+    probs = probs.clone()
+    probs[..., tokenizer.mask_token_id] = 0
+    top_2_values, top_2_indices = torch.topk(probs, 2, dim=-1)
+    values = top_2_values[..., 0] - top_2_values[..., 1]
+    indices = top_2_indices[..., 0]
+    return torch.where(z_t == indices, 0, values)
+
+@torch.no_grad()
 def score_mask_position_max(z_t, probs, tokenizer):
     is_mask_token = (z_t == tokenizer.mask_token_id)
     probs = probs.clone()

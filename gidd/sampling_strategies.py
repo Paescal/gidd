@@ -5,6 +5,8 @@ from functools import partial
 from gidd.utils import (
     score_position_for_change_max,
     score_position_for_change_margin,
+    score_position_for_keep_where_confident_max,
+    score_position_for_keep_where_confident_margin,
     score_mask_position_max,
     score_mask_position_margin,
     all_positions,
@@ -31,6 +33,13 @@ def get_score_position_for_change(config, tokenizer):
             return partial(score_position_for_change_max, tokenizer=tokenizer)
         case "change_margin":
             return partial(score_position_for_change_margin, tokenizer=tokenizer)
+
+def get_score_position_for_keep_where_confident(config, tokenizer):
+    match config.sampling.score_position_for_change:
+        case "change_max":
+            return partial(score_position_for_keep_where_confident_max, tokenizer=tokenizer)
+        case "change_margin":
+            return partial(score_position_for_keep_where_confident_margin, tokenizer=tokenizer)
 
 def get_select_position(config, arg_name='select_position'):
     match arg_name:
@@ -110,6 +119,11 @@ def get_sampling_strategy(config, tokenizer, noise_schedule=None, min_p=None):
         case "gidd_change_based_on_model_confidence_to_change":
             return partial(gidd_change_based_on_model_confidence_to_change,
                            score_position_for_change=get_score_position_for_change(config, tokenizer),
+                           select_position=get_select_position(config),
+                           change_token=get_change_token(config, tokenizer),)
+        case "gidd_keep_where_confident":
+            return partial(gidd_keep_where_confident,
+                           score_position_for_keep_where_confident=get_score_position_for_keep_where_confident(config, tokenizer),
                            select_position=get_select_position(config),
                            change_token=get_change_token(config, tokenizer),)
 
@@ -302,6 +316,12 @@ def gidd_selected_positions_decomposed_update_distribution(probs, z_t, t, s, i, 
 
 def gidd_change_based_on_model_confidence_to_change(probs, z_t, t, s, i, diffusion_mask, score_position_for_change, select_position, change_token):
     score = score_position_for_change(z_t, probs) * diffusion_mask
+    update_positions = select_position(score)
+    next_z_t = change_token(probs, z_t)
+    return update_positions, next_z_t
+
+def gidd_keep_where_confident(probs, z_t, t, s, i, diffusion_mask, score_position_for_keep_where_confident, select_position, change_token):
+    score = score_position_for_keep_where_confident(z_t, probs) * diffusion_mask
     update_positions = select_position(score)
     next_z_t = change_token(probs, z_t)
     return update_positions, next_z_t

@@ -31,6 +31,7 @@ strategies=(
     # "gidd_independent_positions_decomposed_update_distribution"
     "gidd_selected_positions_decomposed_update_distribution"
     "gidd_change_based_on_model_confidence_to_change"
+    "gidd_keep_where_confident"
 )
 score_mask_positions=(
     "MDM_max"
@@ -235,6 +236,36 @@ if [ $build_combinations_file = true ]; then
                                                 for change_token in "${change_tokens[@]}"; do
                                                     for self_correction_strategy in "${self_correction_strategies[@]}"; do
                                                         echo "$ckpt,gidd_change_based_on_model_confidence_to_change,score_position_for_change=$score_position_for_change select_position=$select_position change_token=$change_token k=$k gumbel_noise_coefficient=$gn self_correction=$self_correction_strategy $suffix" >> $combinations_file
+                                                    done
+                                                done
+                                            done
+                                        done
+                                    fi
+                                done
+                            done
+                        fi
+                    fi
+                    
+                    # gidd_keep_where_confident or something like that
+                    # For each position, compute the score as either:
+                    # - 0 if the current token is the most likely token according to the model's prediction.
+                    # - The confidence/margin of the model otherwise.
+                    # Based on the scores of the positions, select a subset of positions to update.
+                    # Update the selected positions according to your strategy.
+                    # Parameters:
+                    # - The function to compute the score for each position (confidence or margin).
+                    # - The strategy to select the positions to update based on the scores.
+                    # - The strategy to select the new token once a position is selected.
+                    if [[ " ${strategies[@]} " =~ " gidd_keep_where_confident " ]]; then
+                        if (( $(echo "$noise > 0" | bc -l) )); then
+                            for score_position_for_change in "${score_positions_for_change[@]}"; do
+                                for select_position in "${select_positions[@]}"; do
+                                    if [ "$select_position" = "top_k_gumbel" ]; then
+                                        for k in "${ks[@]}"; do
+                                            for gn in "${gumbel_noise_coefficients[@]}"; do
+                                                for change_token in "${change_tokens[@]}"; do
+                                                    for self_correction_strategy in "${self_correction_strategies[@]}"; do
+                                                        echo "$ckpt,gidd_keep_where_confident,score_position_for_change=$score_position_for_change select_position=$select_position change_token=$change_token k=$k gumbel_noise_coefficient=$gn self_correction=$self_correction_strategy $suffix" >> $combinations_file
                                                     done
                                                 done
                                             done
