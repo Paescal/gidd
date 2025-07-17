@@ -32,7 +32,8 @@ def get_dataset(config, num_proc=32):
         train_ds = ds['train']
         print(f"train dataset size: {len(train_ds)}")
         test_ds = ds['test']
-        score_ds = test_ds
+        score_ds = load_from_disk(f"/local/home/prisold/gidd/gidd/datasets/sudoku_shah/hard/test")
+        # score_ds = test_ds
         
         # expects sudoku.yaml to contain e.g. dataset_name: gidd/datasets/sudoku/train/, dataset_subset: 3m
         # train_ds = load_dataset(

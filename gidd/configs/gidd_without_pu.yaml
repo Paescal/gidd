@@ -24,7 +24,7 @@ training:
   score_batch_size: 64
   # num_train_steps: 1 epoch = 1_889_993 / 64 = 29_532
   # for shah: 1 epoch = 1_704_462 samples, 1_704_462 / 128 = 13_316.109
-  num_train_steps: 666_000
+  num_train_steps: 1_332_000 # 666_000 # should've been 668_000 for 50 epochs if only saved every 4000 steps but was 666_000
   lr_schedule: cosine # [cosine, linear, constant]
   warmup_steps: 10_000 #10000
   low_discrepancy_sampling: True
