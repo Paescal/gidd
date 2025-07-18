@@ -198,7 +198,7 @@ class GiddSampler(Sampler):
         #         # history_tensor = torch.stack(history, dim=0).permute(1, 0, 2)  # (bs, num_denoising_steps + 1, max_length)
         #         # print(f"history: {history_tensor[0, -extra_step_counter:, -max_length:]}")
         if keep_history:
-            return z_t, torch.stack(history, dim=0).permute(1, 0, 2) # (bs, num_denoising_steps + 1, max_length)
+            return z_t, torch.stack(history, dim=0).permute(1, 0, 2) # (num_denoising_steps + self_correction_steps + 1, bs, max_length) -> (bs, num_denoising_steps + self_correction_steps + 1, max_length)
         else:
             return z_t, None
     

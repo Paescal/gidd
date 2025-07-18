@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-num_samples=64
+num_samples=640
 num_denoising_steps=81
 batch_size=64
 min_p=0
@@ -14,9 +14,12 @@ seeds=(
 )
 checkpoints=(
     # "2025-06-18/12-51-55/checkpoints/latest/ gidd 0"
-    "2025-06-13/15-04-32/checkpoints/latest/ gidd 0.2"
+    # "2025-06-13/15-04-32/checkpoints/latest/ gidd 0.2"
     # "2025-06-11/18-28-57/checkpoints/latest/ mdlm -"
     # "2025-06-01/17-31-45/checkpoints/latest/ gidd 0"
+    # "checkpoints/gidd_0/50_epochs gidd 0"
+    "checkpoints/gidd_0_2/50_epochs gidd 0.2"
+    # "checkpoints/mdlm/50_epochs mdlm -"
 )
 datasets=(
     # "easy"
@@ -26,11 +29,11 @@ strategies=(
     # "mdlm_vanilla"
     # "mdlm_adaptive_score_select_update"
     # "gidd_emulate_mdlm_vanilla"
-    "gidd_emulate_mdlm_adaptive_score_select_update"
+    # "gidd_emulate_mdlm_adaptive_score_select_update"
     # "gidd_original"
     # "gidd_independent_positions_decomposed_update_distribution"
-    "gidd_selected_positions_decomposed_update_distribution"
-    "gidd_change_based_on_model_confidence_to_change"
+    # "gidd_selected_positions_decomposed_update_distribution"
+    # "gidd_change_based_on_model_confidence_to_change"
     "gidd_keep_where_confident"
 )
 score_mask_positions=(
@@ -62,7 +65,7 @@ gumbel_noise_coefficients=(
     "0"
 )
 self_correction_strategies=(
-    # "none"
+    "none"
     "original"
     # "max"
 )

@@ -30,9 +30,60 @@ class UpdatableMaskHandler:
 # TODO?:Different version: If z_t_next is a state which has been seen before, remove the positions that changed from z_t to z_t_next from the updatable_mask for state z_t
 
 
+# def correction_step_original(model, tokenizer, diffusion_mask, z_t, t, temp, tokens_per_step):
+#     logits = model(z_t, t)
+#     logits[..., tokenizer.mask_token_id] = -1e6
+
+#     p_t = (logits / temp).softmax(-1)
+
+#     z_tm1 = sample_categorical(p_t)
+#     score = (z_tm1 != z_t) * p_t.gather(-1, z_tm1.unsqueeze(-1)).squeeze(-1) * diffusion_mask
+
+#     ids = torch.topk(score, tokens_per_step, dim=-1).indices
+#     z_tm1 = z_t.scatter(-1, ids, z_tm1.gather(-1, ids))
+
+#     acc = ((z_tm1 == logits.argmax(-1)) * diffusion_mask).sum(-1) / diffusion_mask.sum(-1)
+#     return torch.where(diffusion_mask.to(dtype=bool), z_tm1, z_t), acc
+
+# def self_correction_original(model, tokenizer, diffusion_mask, z_t, t, temp, tokens_per_step, max_num_denoising_steps=20, max_patience=10, keep_history=False):
+#     t = torch.full((z_t.shape[0],), device=z_t.device, fill_value=t)
+
+#     logits = model(z_t, t)
+#     logits[..., tokenizer.mask_token_id] = -1e6
+#     init_acc = ((z_t == logits.argmax(-1)) * diffusion_mask).sum(-1) / diffusion_mask.sum(-1)
+#     print(f"Initial accuracy: {init_acc}")
+#     if (init_acc == 1).all():
+#         return z_t, []
+
+#     history = [] if keep_history else None
+    
+#     max_acc = init_acc.clone()
+#     curr_patience = torch.zeros_like(max_acc)
+#     # converged = 0
+#     # early_stopped = 0
+#     for i in range(max_num_denoising_steps):
+#         z_t_next, acc = correction_step_original(model, tokenizer, diffusion_mask, z_t, t, temp, tokens_per_step)
+#         # TODO: accuracy is a tensor of shape (batch_size, ), so fix code accordingly
+
+#         max_acc = torch.where(acc > max_acc, acc, max_acc)
+#         curr_patience = torch.where(acc <= max_acc, curr_patience + 1, torch.zeros_like(curr_patience))
+#         if (curr_patience > max_patience).all():
+#             # early_stopped = 1
+#             break
+#         if (z_t == z_t_next).all():
+#             # converged = 1
+#             break
+#         z_t = z_t_next
+#         if keep_history:
+#             history.append(z_t_next.clone())
+
+#     # num_changes = (initial_z_t != z_t).sum().item()
+#     print(f"Final accuracy: {acc}")
+#     return z_t, history
+
 def correction_step_original(model, tokenizer, diffusion_mask, z_t, t, temp, tokens_per_step):
     logits = model(z_t, t)
-    logits[..., tokenizer.mask_token_id] = -1e6
+    logits[..., tokenizer.mask_token_id:] = -1e6
 
     p_t = (logits / temp).softmax(-1)
 
@@ -46,40 +97,70 @@ def correction_step_original(model, tokenizer, diffusion_mask, z_t, t, temp, tok
     return torch.where(diffusion_mask.to(dtype=bool), z_tm1, z_t), acc
 
 def self_correction_original(model, tokenizer, diffusion_mask, z_t, t, temp, tokens_per_step, max_num_denoising_steps=20, max_patience=10, keep_history=False):
-    t = torch.full((z_t.shape[0],), device=z_t.device, fill_value=t)
+    samples = []
+    history = []
+    t = torch.full((1,), device=z_t.device, fill_value=t)
+    max_denoising_steps_in_batch = 0
+    for sample, sample_diffusion_mask in zip(z_t, diffusion_mask, strict=True):
+        sample = sample.unsqueeze(0)
+        sample_diffusion_mask = sample_diffusion_mask.unsqueeze(0)
+        sample_history = []
+        logits = model(sample, t)
+        logits[..., tokenizer.mask_token_id:] = -1e6
+        
+        init_acc = ((sample == logits.argmax(-1)) * sample_diffusion_mask).sum(-1) / sample_diffusion_mask.sum(-1)
+        if init_acc == 1:
+            samples.append(sample)
+            if keep_history:
+                history.append([])
+            continue
+        max_acc = 0
+        curr_patience = 0
+        # converged = 0
+        # early_stopped = 0
+        for i in range(max_num_denoising_steps):
+            sample_next, acc = correction_step_original(model, tokenizer, sample_diffusion_mask, sample, t, temp, tokens_per_step)
 
-    logits = model(z_t, t)
-    logits[..., tokenizer.mask_token_id] = -1e6
-    init_acc = ((z_t == logits.argmax(-1)) * diffusion_mask).sum(-1) / diffusion_mask.sum(-1)
-    print(f"Initial accuracy: {init_acc}")
-    if (init_acc == 1).all():
-        return z_t, []
+            if acc > max_acc:
+                max_acc = acc
+                curr_patience = 0
+            else:
+                curr_patience += 1
+                if curr_patience > max_patience:
+                    # early_stopped = 1
+                    # print(f"Early stopped at step {i + 1}")
+                    break
 
-    history = [] if keep_history else None
-    
-    max_acc = init_acc.clone()
-    curr_patience = torch.zeros_like(max_acc)
-    # converged = 0
-    # early_stopped = 0
-    for i in range(max_num_denoising_steps):
-        z_t_next, acc = correction_step_original(model, tokenizer, diffusion_mask, z_t, t, temp, tokens_per_step)
-        # TODO: accuracy is a tensor of shape (batch_size, ), so fix code accordingly
-
-        max_acc = torch.where(acc > max_acc, acc, max_acc)
-        curr_patience = torch.where(acc <= max_acc, curr_patience + 1, torch.zeros_like(curr_patience))
-        if (curr_patience > max_patience).all():
-            # early_stopped = 1
-            break
-        if (z_t == z_t_next).all():
-            # converged = 1
-            break
-        z_t = z_t_next
+            if (sample == sample_next).all():
+                # converged = 1
+                # print(f"Converged at step {i + 1}")
+                break
+            if i + 1 > max_denoising_steps_in_batch:
+                max_denoising_steps_in_batch = i + 1
+            sample = sample_next
+            if keep_history:
+                sample_history.append(sample_next.clone())
+        samples.append(sample)
         if keep_history:
-            history.append(z_t_next.clone())
+            history.append(sample_history)
 
-    # num_changes = (initial_z_t != z_t).sum().item()
-    print(f"Final accuracy: {acc}")
+    z_t = torch.cat(samples, dim=0)
+    if keep_history:
+        if max_denoising_steps_in_batch == 0:
+            history = []
+        else:
+            for i in range(len(history)):
+                history[i] = history[i] + [z_t[i].unsqueeze(0)] * (max_denoising_steps_in_batch - len(history[i]))
+                history[i] = torch.cat(history[i], dim=0)
+            history = torch.stack(history, dim=1)
+            history = list(torch.unbind(history, dim=0))
     return z_t, history
+
+def correction_step_keep_where_confident(model, tokenizer, diffusion_mask, z_t, t, temp, tokens_per_step):
+    pass
+
+def self_correction_keep_where_confident(model, tokenizer, diffusion_mask, z_t, t, temp, tokens_per_step, max_num_denoising_steps=20, max_patience=10, keep_history=False):
+    pass
 
 def correction_step_max(model, tokenizer, diffusion_mask, z_t, t, temp, tokens_per_step, updatable_mask):
     logits = model(z_t, t)
@@ -164,4 +245,3 @@ def self_correction_max(model, tokenizer, diffusion_mask, z_t, t, temp, tokens_p
 
 # TODO: Try margin
 
-# Oscillation prevention: ramp and decay position update probability

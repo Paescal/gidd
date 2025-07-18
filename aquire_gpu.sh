@@ -1,5 +1,5 @@
 #!/bin/bash
-AVAILABLE_GPUS=(1 2 3)
+AVAILABLE_GPUS=(0 1)
 
 LOCK_DIR="$( dirname "${BASH_SOURCE[0]}" )"
 LOCK_DIR="$( cd $LOCK_DIR && pwd )/tmp/gpu_locks"
