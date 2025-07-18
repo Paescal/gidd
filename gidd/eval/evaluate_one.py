@@ -53,9 +53,11 @@ def main(args, sampling_config):
                 diffusion_mask = batch['diffusion_mask']
                 solutions_tokenized = batch['input_ids']
                 if ckpt_config.training.use_diffusion_mask:
-                    samples, history = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, num_denoising_steps=args.num_denoising_steps, decode=False, show_progress=False, keep_history=(i == 0))
                     if i == 0:
+                        samples, history_of_first_batch = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, num_denoising_steps=args.num_denoising_steps, decode=False, show_progress=False, keep_history=True)
                         history_solution = solutions_tokenized
+                    else:
+                        samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, num_denoising_steps=args.num_denoising_steps, decode=False, show_progress=False, keep_history=False)
                 
                 if ckpt_config.model.puzzle_conditioning == 'in_context':
                         samples = samples[..., -ckpt_config.model.max_seq_len:]
@@ -72,12 +74,12 @@ def main(args, sampling_config):
     print(f"accuracy={accuracy:.4f}")
     print(f"correctly_filled_cells={correctly_filled_cells:.4f}")
     print(f"not_fully_unmasked={not_fully_unmasked:.4f}")
-    history = history.cpu()[0]
+    history_of_first_sample = history_of_first_batch.cpu()[0]
     history_solution = history_solution.cpu()[0]
     if ckpt_config.model.puzzle_conditioning == 'in_context':
-        history = history[:, -ckpt_config.model.max_seq_len:]
+        history_of_first_sample = history_of_first_sample[:, -ckpt_config.model.max_seq_len:]
         history_solution = history_solution[-ckpt_config.model.max_seq_len:]
-    print(history_to_str(history, history_solution))
+    print(history_to_str(history_of_first_sample, history_solution))
 
 
 if __name__ == "__main__":
