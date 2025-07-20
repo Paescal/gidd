@@ -8,7 +8,7 @@ import tqdm.auto as tqdm
 from gidd.diffusion_process import NoiseSchedule
 from gidd.utils import get_position_metric, get_position_sampling_strategy, get_token_sampling_strategy, sample_categorical
 from gidd.sampling_strategies import get_sampling_strategy
-from gidd.self_correction_strategies import self_correction_original, self_correction_max
+from gidd.self_correction_strategies import self_correction_original, self_correction_original_oscillation_prevention, self_correction_keep_where_confident
 
 class Sampler(nn.Module):
     def __init__(self, model, tokenizer, noise_schedule: NoiseSchedule, t_eps: float = 1e-4):
@@ -176,10 +176,28 @@ class GiddSampler(Sampler):
             temp = 1
             tokens_per_step = 1
             z_t, history_self_correction = self_correction_original(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, keep_history=keep_history)
-        elif self_correction == "max":
+        elif self_correction == "oscillation_prevention_fast":
             temp = 1
             tokens_per_step = 1
-            z_t, history_self_correction = self_correction_max(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, keep_history=keep_history)
+            backoff_factor=0.5
+            recovery_factor_fast=0.5
+            recovery_type='fast'
+            z_t, history_self_correction = self_correction_original_oscillation_prevention(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, backoff_factor=backoff_factor, recovery_factor_fast=recovery_factor_fast, recovery_type=recovery_type, keep_history=keep_history)
+        elif self_correction == "oscillation_prevention_slow":
+            temp = 1
+            tokens_per_step = 1
+            backoff_factor=0.5
+            recovery_factor_slow=1.0
+            recovery_type='slow'
+            z_t, history_self_correction = self_correction_original_oscillation_prevention(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, backoff_factor=backoff_factor, recovery_factor_slow=recovery_factor_slow, recovery_type=recovery_type, keep_history=keep_history)
+        elif self_correction == "keep_where_confident":
+            temp = 1
+            tokens_per_step = 1
+            z_t, history_self_correction = self_correction_keep_where_confident(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, keep_history=keep_history)
+        # elif self_correction == "max":
+        #     temp = 1
+        #     tokens_per_step = 1
+        #     z_t, history_self_correction = self_correction_max(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, keep_history=keep_history)
         
         if keep_history:
             history = history + history_self_correction
