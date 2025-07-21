@@ -13,10 +13,16 @@ seeds=(
     "3"
 )
 checkpoints=(
-    "2025-06-18/12-51-55/checkpoints/latest/ gidd 0"
-    "2025-06-13/15-04-32/checkpoints/latest/ gidd 0.2"
-    "2025-06-11/18-28-57/checkpoints/latest/ mdlm -"
-    "2025-06-01/17-31-45/checkpoints/latest/ gidd 0"
+    # "2025-06-18/12-51-55/checkpoints/latest/ gidd 0"
+    # "2025-06-13/15-04-32/checkpoints/latest/ gidd 0.2"
+    # "2025-06-11/18-28-57/checkpoints/latest/ mdlm -"
+    # "2025-06-01/17-31-45/checkpoints/latest/ gidd 0"
+    "checkpoints/mdlm/50_epochs mdlm -"
+    # "checkpoints/mdlm/100_epochs mdlm -"
+    "checkpoints/gidd_0/50_epochs gidd 0"
+    # "checkpoints/gidd_0/100_epochs gidd 0"
+    "checkpoints/gidd_0_2/50_epochs gidd 0.2"
+    # "checkpoints/gidd_0_2/100_epochs gidd 0.2"
 )
 datasets=(
     "easy"
@@ -64,7 +70,9 @@ gumbel_noise_coefficients=(
 self_correction_strategies=(
     "none"
     "original"
-    "max"
+    "oscillation_prevention_fast"
+    "oscillation_prevention_slow"
+    "keep_where_confident"
 )
 
 output_dir="$( dirname "${BASH_SOURCE[0]}" )/../../outputs/evaluate_all"
@@ -145,9 +153,13 @@ if [ $build_combinations_file = true ]; then
                                     for k in "${ks[@]}"; do
                                         for gn in "${gumbel_noise_coefficients[@]}"; do
                                             for unmask_token in "${unmask_tokens[@]}"; do
-                                                for self_correction_strategy in "${self_correction_strategies[@]}"; do
-                                                    echo "$ckpt,gidd_emulate_mdlm_adaptive_score_select_update,score_mask_position=$score_mask_position select_position=$select_position unmask_token=$unmask_token k=$k gumbel_noise_coefficient=$gn self_correction=$self_correction_strategy $suffix" >> $combinations_file
-                                                done
+                                                if [[ "$unmask_token" == "MDM_max" && $(echo "$noise > 0" | bc -l) -eq 1 ]]; then
+                                                    for self_correction_strategy in "${self_correction_strategies[@]}"; do
+                                                        echo "$ckpt,gidd_emulate_mdlm_adaptive_score_select_update,score_mask_position=$score_mask_position select_position=$select_position unmask_token=$unmask_token k=$k gumbel_noise_coefficient=$gn self_correction=$self_correction_strategy $suffix" >> $combinations_file
+                                                    done
+                                                else # Only try self-correction on promising configurations
+                                                    echo "$ckpt,gidd_emulate_mdlm_adaptive_score_select_update,score_mask_position=$score_mask_position select_position=$select_position unmask_token=$unmask_token k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
+                                                fi
                                             done
                                         done
                                     done
@@ -234,9 +246,13 @@ if [ $build_combinations_file = true ]; then
                                         for k in "${ks[@]}"; do
                                             for gn in "${gumbel_noise_coefficients[@]}"; do
                                                 for change_token in "${change_tokens[@]}"; do
-                                                    for self_correction_strategy in "${self_correction_strategies[@]}"; do
-                                                        echo "$ckpt,gidd_change_based_on_model_confidence_to_change,score_position_for_change=$score_position_for_change select_position=$select_position change_token=$change_token k=$k gumbel_noise_coefficient=$gn self_correction=$self_correction_strategy $suffix" >> $combinations_file
-                                                    done
+                                                    if [[ "$change_token" == "change_max" && $(echo "$noise > 0" | bc -l) -eq 1 ]]; then
+                                                        for self_correction_strategy in "${self_correction_strategies[@]}"; do
+                                                            echo "$ckpt,gidd_change_based_on_model_confidence_to_change,score_position_for_change=$score_position_for_change select_position=$select_position change_token=$change_token k=$k gumbel_noise_coefficient=$gn self_correction=$self_correction_strategy $suffix" >> $combinations_file
+                                                        done
+                                                    else # Only try self-correction on promising configurations
+                                                        echo "$ckpt,gidd_change_based_on_model_confidence_to_change,score_position_for_change=$score_position_for_change select_position=$select_position change_token=$change_token k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
+                                                    fi
                                                 done
                                             done
                                         done
@@ -246,7 +262,7 @@ if [ $build_combinations_file = true ]; then
                         fi
                     fi
                     
-                    # gidd_keep_where_confident or something like that
+                    # gidd_keep_where_confident
                     # For each position, compute the score as either:
                     # - 0 if the current token is the most likely token according to the model's prediction.
                     # - The confidence/margin of the model otherwise.
@@ -264,9 +280,13 @@ if [ $build_combinations_file = true ]; then
                                         for k in "${ks[@]}"; do
                                             for gn in "${gumbel_noise_coefficients[@]}"; do
                                                 for change_token in "${change_tokens[@]}"; do
-                                                    for self_correction_strategy in "${self_correction_strategies[@]}"; do
-                                                        echo "$ckpt,gidd_keep_where_confident,score_position_for_change=$score_position_for_change select_position=$select_position change_token=$change_token k=$k gumbel_noise_coefficient=$gn self_correction=$self_correction_strategy $suffix" >> $combinations_file
-                                                    done
+                                                    if [[ "$change_token" == "change_max" && $(echo "$noise > 0" | bc -l) -eq 1 ]]; then
+                                                        for self_correction_strategy in "${self_correction_strategies[@]}"; do
+                                                            echo "$ckpt,gidd_keep_where_confident,score_position_for_change=$score_position_for_change select_position=$select_position change_token=$change_token k=$k gumbel_noise_coefficient=$gn self_correction=$self_correction_strategy $suffix" >> $combinations_file
+                                                        done
+                                                    else # Only try self-correction on promising configurations
+                                                        echo "$ckpt,gidd_keep_where_confident,score_position_for_change=$score_position_for_change select_position=$select_position change_token=$change_token k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
+                                                    fi
                                                 done
                                             done
                                         done

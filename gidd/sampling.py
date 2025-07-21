@@ -180,14 +180,14 @@ class GiddSampler(Sampler):
             temp = 1
             tokens_per_step = 1
             backoff_factor=0.5
-            recovery_factor_fast=0.5
+            recovery_factor_fast=0.2
             recovery_type='fast'
             z_t, history_self_correction = self_correction_original_oscillation_prevention(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, backoff_factor=backoff_factor, recovery_factor_fast=recovery_factor_fast, recovery_type=recovery_type, keep_history=keep_history)
         elif self_correction == "oscillation_prevention_slow":
             temp = 1
             tokens_per_step = 1
             backoff_factor=0.5
-            recovery_factor_slow=1.0
+            recovery_factor_slow=0.4142
             recovery_type='slow'
             z_t, history_self_correction = self_correction_original_oscillation_prevention(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, backoff_factor=backoff_factor, recovery_factor_slow=recovery_factor_slow, recovery_type=recovery_type, keep_history=keep_history)
         elif self_correction == "keep_where_confident":
