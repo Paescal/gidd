@@ -1,5 +1,9 @@
 #!/bin/bash
-
+export OMP_NUM_THREADS=3
+export MKL_NUM_THREADS=3
+export OPENBLAS_NUM_THREADS=3
+export NUMEXPR_NUM_THREADS=3
+export VECLIB_MAXIMUM_THREADS=3
 
 num_samples=6400
 num_denoising_steps=81
@@ -322,7 +326,7 @@ clear_gpu_locks_path="$gpu_locking_dir/clear_gpu_locks.sh"
 bash "$clear_gpu_locks_path"
 
 echo "Starting evaluation of combinations from $combinations_file"
-cat $combinations_file | parallel --colsep ',' -j 3 '
+cat $combinations_file | parallel --colsep ',' -j 6 '
     GPU=$(bash "$acquire_gpu_path")
 
     CKPT={1}

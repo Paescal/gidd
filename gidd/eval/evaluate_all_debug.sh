@@ -1,5 +1,9 @@
 #!/bin/bash
-
+export OMP_NUM_THREADS=3
+export MKL_NUM_THREADS=3
+export OPENBLAS_NUM_THREADS=3
+export NUMEXPR_NUM_THREADS=3
+export VECLIB_MAXIMUM_THREADS=3
 
 num_samples=640
 num_denoising_steps=81
