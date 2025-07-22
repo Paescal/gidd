@@ -10,7 +10,7 @@ from functools import partial
 from pathlib import Path
 from gidd.utils import parse_dtype, score_sudoku
 from gidd.checkpoints import load_checkpoint
-from gidd.data import _get_dataloader, default_collator
+from gidd.data import _get_dataloader_with_seed, _get_dataloader, default_collator
 from gidd.sampling import get_sampler
 from gidd.eval.visualize import history_to_str
 from datasets import load_from_disk
@@ -38,7 +38,8 @@ def main(args, sampling_config):
     dtype = parse_dtype(ckpt_config.training.dtype)
     ds_path = hydra.utils.to_absolute_path(f"./gidd/datasets/sudoku_shah/{args.dataset}/test")
     ds = load_from_disk(ds_path)
-    data_loader = _get_dataloader(ckpt_config, ds, shuffle=False, drop_last=False, batch_size=args.batch_size, collate_fn=partial(default_collator, ckpt_config, ckpt_tokenizer, text_key="text"), persistent_workers=False)
+    data_loader = _get_dataloader_with_seed(seed, ckpt_config, ds, shuffle=True, drop_last=False, batch_size=args.batch_size, collate_fn=partial(default_collator, ckpt_config, ckpt_tokenizer, text_key="text"), persistent_workers=False)
+    # data_loader = _get_dataloader(ckpt_config, ds, shuffle=False, drop_last=False, batch_size=args.batch_size, collate_fn=partial(default_collator, ckpt_config, ckpt_tokenizer, text_key="text"), persistent_workers=False)
     sampler = get_sampler(ckpt_config, model, ckpt_tokenizer, noise_schedule, sampling_config=sampling_config, compile_step=bool(args.compile_torch), min_p=args.min_p)
     
     model.eval()

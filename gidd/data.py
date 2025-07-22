@@ -249,6 +249,27 @@ def subsample_collator(config, tokenizer, examples, text_key="text"):
     return BatchEncoding({"input_ids": solution_ids, "puzzle_ids": puzzle_ids, "diffusion_mask": diffusion_masks_padded, "attention_mask": attn_masks}, tensor_type="pt", n_sequences=len(solution_ids))
 
 
+def _get_dataloader_with_seed(seed, config, ds, shuffle, drop_last, batch_size, collate_fn, persistent_workers=True):
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        sampler = DistributedSampler(ds, seed=seed, shuffle=shuffle)
+        _shuffle = False
+    else:
+        sampler = None
+        _shuffle = shuffle
+
+    return DataLoader(
+        ds,
+        collate_fn=collate_fn,
+        batch_size=batch_size,
+        drop_last=drop_last,
+        sampler=sampler,
+        num_workers=config.data.num_workers,
+        shuffle=_shuffle,
+        pin_memory=True,
+        persistent_workers=persistent_workers,
+    )
+
+
 def _get_dataloader(config, ds, shuffle, drop_last, batch_size, collate_fn, persistent_workers=True):
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         sampler = DistributedSampler(ds, seed=config.training.seed, shuffle=shuffle)

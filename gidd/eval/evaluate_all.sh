@@ -5,6 +5,8 @@ export OPENBLAS_NUM_THREADS=3
 export NUMEXPR_NUM_THREADS=3
 export VECLIB_MAXIMUM_THREADS=3
 
+num_jobs=6
+
 num_samples=6400
 num_denoising_steps=81
 batch_size=64
@@ -22,11 +24,11 @@ checkpoints=(
     # "2025-06-11/18-28-57/checkpoints/latest/ mdlm -"
     # "2025-06-01/17-31-45/checkpoints/latest/ gidd 0"
     "checkpoints/mdlm/50_epochs mdlm -"
-    # "checkpoints/mdlm/100_epochs mdlm -"
+    "checkpoints/mdlm/100_epochs mdlm -"
     "checkpoints/gidd_0/50_epochs gidd 0"
-    # "checkpoints/gidd_0/100_epochs gidd 0"
+    "checkpoints/gidd_0/100_epochs gidd 0"
     "checkpoints/gidd_0_2/50_epochs gidd 0.2"
-    # "checkpoints/gidd_0_2/100_epochs gidd 0.2"
+    "checkpoints/gidd_0_2/100_epochs gidd 0.2"
 )
 datasets=(
     "easy"
@@ -326,7 +328,7 @@ clear_gpu_locks_path="$gpu_locking_dir/clear_gpu_locks.sh"
 bash "$clear_gpu_locks_path"
 
 echo "Starting evaluation of combinations from $combinations_file"
-cat $combinations_file | parallel --colsep ',' -j 6 '
+cat $combinations_file | parallel --colsep ',' -j $num_jobs '
     GPU=$(bash "$acquire_gpu_path")
 
     CKPT={1}
