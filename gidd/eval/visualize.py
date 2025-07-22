@@ -3,6 +3,8 @@ import csv
 import argparse
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import matplotlib.colors as mcolors
+import matplotlib.patches as patches
 import numpy as np
 
 def sample_history_to_str(history, solution):
@@ -157,6 +159,95 @@ def visualize_history_as_video_multi(histories, mask_token_id, output_path="outp
     ani.save(output_path, writer='pillow', fps=1)
     print(f"Saved multi-sample animation to {output_path}")
 
+def visualize_final_grid_with_update_gradient_multi(histories, mask_token_id, save_path):
+    num_samples = len(histories)
+    grid_size = int(histories[0]['history'].shape[1] ** 0.5)
+    box_size = int(grid_size ** 0.5)
+    cmap = plt.get_cmap('coolwarm')
+
+    fig, axes = plt.subplots(1, num_samples, figsize=(6 * num_samples, 6), constrained_layout=True)
+    if num_samples == 1:
+        axes = [axes]
+
+    for ax, history_entry in zip(axes, histories):
+        history = history_entry['history']
+        solution = history_entry['solution']
+        first_step = history[0]
+        final_step = history[-1]
+        num_steps, seq_len = history.shape
+
+        update_steps = [[] for _ in range(seq_len)]
+        for step_idx in range(1, num_steps):
+            changed = (history[step_idx] != history[step_idx - 1])
+            for i in torch.where(changed)[0]:
+                update_steps[i.item()].append(step_idx)
+
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xlim(-0.5, grid_size - 0.5)
+        ax.set_ylim(grid_size - 0.5, -0.5)
+        ax.set_aspect('equal')
+
+        for j in range(grid_size + 1):
+            lw = 2 if j % box_size == 0 else 0.5
+            ax.axhline(j - 0.5, color='black', lw=lw)
+            ax.axvline(j - 0.5, color='black', lw=lw)
+
+        for idx in range(seq_len):
+            r, c = divmod(idx, grid_size)
+            updates = update_steps[idx]
+            num_updates = len(updates)
+            init_token = first_step[idx].item()
+            final_token = final_step[idx].item()
+            target_token = solution[idx].item()
+
+            if num_updates == 0:
+                ax.add_patch(patches.Rectangle((c - 0.5, r - 0.5), 1, 1, color='gray', alpha=0.2))
+            else:
+                for j, update_step in enumerate(updates):
+                    color = cmap(update_step / (num_steps - 1))
+                    width = 1.0 / num_updates
+                    ax.add_patch(
+                        patches.Rectangle(
+                            (c - 0.5 + j * width, r - 0.5),
+                            width, 1,
+                            color=color
+                        )
+                    )
+
+            # Digit content
+            if final_token == mask_token_id:
+                text = "."
+                digit_color = 'lightgray'
+            else:
+                text = str(final_token)
+                if init_token != mask_token_id:
+                    digit_color = 'black'
+                else:
+                    digit_color = 'black' if final_token == target_token else 'red'
+
+            ax.text(c, r, text, ha='center', va='center', fontsize=12, color=digit_color)
+
+            # Step number if exactly one update
+            if num_updates == 1:
+                step_str = str(updates[0])
+                ax.text(c - 0.4, r - 0.35, step_str, ha='left', va='top',
+                        fontsize=6, color='black', fontweight='normal')
+
+        ax.set_title(f"{history_entry['strategy']}", fontsize=12)
+
+    norm = mcolors.Normalize(vmin=0, vmax=1)
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=axes, orientation='horizontal', fraction=0.05, pad=0.08)
+    cbar.set_label("Update Time (Early → Late)", fontsize=12)
+
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Saved image to {save_path}")
+
+
+
 def visualize_sampling_process(csv_file, mask_token_id, rows_to_visualize, visualization_type='print'):
     with open(csv_file, newline='') as f:
         reader = csv.DictReader(f, fieldnames=[
@@ -183,6 +274,9 @@ def visualize_sampling_process(csv_file, mask_token_id, rows_to_visualize, visua
                 print("\n" + "-" * 50 + "\n")
         elif visualization_type == 'video':
             visualize_history_as_video_multi(selected_histories, mask_token_id)
+        elif visualization_type == 'image':
+            filename = "outputs/evaluate_all/final_grid_updates_multiple.png"
+            visualize_final_grid_with_update_gradient_multi(selected_histories, mask_token_id, filename)
 
 
 def main(args):
@@ -194,7 +288,7 @@ if __name__ == "__main__":
     parser.add_argument('--mask_token_id', type=int, default=0, help='Token ID of the mask token')
     parser.add_argument('--rows', type=int, nargs='+', default=[0],
                         help='Indices of rows to visualize from the CSV file')
-    parser.add_argument('--visualization_type', type=str, choices=['print', 'video'], default='print',
+    parser.add_argument('--visualization_type', type=str, choices=['print', 'video', 'image'], default='print',
                         help='Type of visualization to perform: "print" for console output, "video" for animation')
     args = parser.parse_args()
     main(args)

@@ -7,7 +7,7 @@ export VECLIB_MAXIMUM_THREADS=3
 
 num_jobs=6
 
-num_samples=640
+num_samples=64
 num_denoising_steps=81
 batch_size=64
 min_p=0
@@ -24,7 +24,7 @@ checkpoints=(
     # "2025-06-11/18-28-57/checkpoints/latest/ mdlm -"
     # "2025-06-01/17-31-45/checkpoints/latest/ gidd 0"
     # "checkpoints/gidd_0/50_epochs gidd 0"
-    "checkpoints/gidd_0_2/50_epochs gidd 0.2"
+    # "checkpoints/gidd_0_2/50_epochs gidd 0.2"
     # "checkpoints/mdlm/50_epochs mdlm -"
     # "checkpoints/gidd_0/100_epochs gidd 0"
     "checkpoints/gidd_0_2/100_epochs gidd 0.2"
@@ -39,9 +39,9 @@ strategies=(
     # "mdlm_adaptive_score_select_update"
     # "gidd_emulate_mdlm_vanilla"
     # "gidd_emulate_mdlm_adaptive_score_select_update"
-    "gidd_original"
+    # "gidd_original"
     # "gidd_independent_positions_decomposed_update_distribution"
-    "gidd_selected_positions_decomposed_update_distribution"
+    # "gidd_selected_positions_decomposed_update_distribution"
     # "gidd_change_based_on_model_confidence_to_change"
     "gidd_keep_where_confident"
 )
@@ -76,9 +76,9 @@ gumbel_noise_coefficients=(
 self_correction_strategies=(
     "none"
     "original"
-    "oscillation_prevention_fast"
-    "oscillation_prevention_slow"
-    "keep_where_confident"
+    # "oscillation_prevention_fast"
+    # "oscillation_prevention_slow"
+    # "keep_where_confident"
     # "max"
 )
 

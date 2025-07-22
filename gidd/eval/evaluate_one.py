@@ -75,12 +75,13 @@ def main(args, sampling_config):
     print(f"accuracy={accuracy:.4f}")
     print(f"correctly_filled_cells={correctly_filled_cells:.4f}")
     print(f"not_fully_unmasked={not_fully_unmasked:.4f}")
-    history_of_first_sample = history_of_first_batch.cpu()[0]
-    history_solution = history_solution.cpu()[0]
+    chosen_sample_for_history = 4
+    history_of_chosen_sample = history_of_first_batch.cpu()[chosen_sample_for_history]
+    history_solution = history_solution.cpu()[chosen_sample_for_history]
     if ckpt_config.model.puzzle_conditioning == 'in_context':
-        history_of_first_sample = history_of_first_sample[:, -ckpt_config.model.max_seq_len:]
+        history_of_chosen_sample = history_of_chosen_sample[:, -ckpt_config.model.max_seq_len:]
         history_solution = history_solution[-ckpt_config.model.max_seq_len:]
-    print(history_to_str(history_of_first_sample, history_solution))
+    print(history_to_str(history_of_chosen_sample, history_solution))
 
 
 if __name__ == "__main__":
