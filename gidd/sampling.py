@@ -106,6 +106,11 @@ class GiddSampler(Sampler):
             logits = self.model(z_t, t, puzzle_conditioning=puzzle_conditioning)
             logits[..., self.tokenizer.mask_token_id:] = -1e6
             probs = logits.softmax(-1)
+            if i == 77:
+                print(f"probs: {probs[4, 123, :9]}")
+                print(f"logits: {logits[4, 123, :9]}")
+                print(f"t: {t}")
+                print(f"z_t: {z_t[4]}")
 
             update_positions, next_z_t = self.sampling_strategy(probs, z_t, t, s, i, diffusion_mask)
             # update_positions, next_z_t = self.sampling_strategy(probs, z_t, t, s, diffusion_mask)
@@ -147,7 +152,11 @@ class GiddSampler(Sampler):
         for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
             # print(f"sampling step {i}")
             # old_z_t = z_t.clone()
+            if i > num_denoising_steps - 5:
+                print(i, z_t[4, 123].item())
             z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], i=i, diffusion_mask=diffusion_mask, puzzle_conditioning=puzzle_conditioning, sequence_length_without_conditioning=max_length)
+            if i > num_denoising_steps - 5:
+                print(i, z_t[4, 123].item())
             # print(f"sampling step {i} done")
             
             # puzzle_string = ''

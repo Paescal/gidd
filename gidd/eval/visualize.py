@@ -1,3 +1,4 @@
+import hydra
 import torch
 import csv
 import argparse
@@ -6,6 +7,7 @@ import matplotlib.animation as animation
 import matplotlib.colors as mcolors
 import matplotlib.patches as patches
 import numpy as np
+from gidd.checkpoints import load_checkpoint
 
 def sample_history_to_str(history, solution):
     num_steps, seq_len = history.shape
@@ -97,63 +99,175 @@ def visualize_history_as_video(history, mask_token_id, output_path="outputs/eval
     ani.save(output_path, writer='pillow', fps=3)
     print(f"Saved animation to {output_path}")
 
+@torch.no_grad()
 def visualize_history_as_video_multi(histories, mask_token_id, output_path="outputs/evaluate_all/sampling_process_multi.gif"):
     num_samples = len(histories)
     checkpoints = [h['checkpoint'] for h in histories]
     strategies = [h['strategy'] for h in histories]
     params = [h['params'] for h in histories]
     solutions = [h['solution'] for h in histories]
+    
+    models = []
+    noise_schedules = []
+    ts = []
+    configs = []
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    for h in histories:
+        checkpoint = h['checkpoint']
+        model_path = hydra.utils.to_absolute_path(f"./outputs/{checkpoint}")
+        model, noise_schedule, ckpt_tokenizer, ckpt_config = load_checkpoint(model_path, device=device)
+        models.append(model)
+        noise_schedules.append(noise_schedule)
+        t_eps = float(ckpt_config.model.t_eps)
+        ckpt_ts = torch.linspace(0, 1, ckpt_config.sampling.num_denoising_steps + 1, device=device).unsqueeze(-1)
+        ckpt_ts = (1 - 2 * t_eps) * ckpt_ts + t_eps
+        ts.append(ckpt_ts)
+        configs.append(ckpt_config)
+    
     histories = [h['history'] for h in histories]
 
     max_steps = max(h.shape[0] for h in histories)
-    fig, axes = plt.subplots(1, num_samples, figsize=(4 * num_samples, 4))
+    fig, axes = plt.subplots(
+        2, num_samples, figsize=(6 * num_samples, 8),
+        gridspec_kw={'height_ratios': [4, 1]}, constrained_layout=True
+    )
 
     if num_samples == 1:
-        axes = [axes]
+        grid_axes = [axes[0]]
+        logit_axes = [axes[1]]
+    else:
+        grid_axes = axes[0]
+        logit_axes = axes[1]
 
-    for ax in axes:
+    for ax in grid_axes + logit_axes:
         ax.axis('off')
 
     grid_size = int((histories[0].shape[1]) ** 0.5)
     box_size = int(grid_size ** 0.5)
+    cmap = plt.get_cmap('coolwarm')
 
-    fixed_positions = [(h[0].reshape(grid_size, grid_size) != mask_token_id) for h in histories]
+    update_steps_all = []
+    for history in histories:
+        num_steps, seq_len = history.shape
+        update_steps = [[] for _ in range(seq_len)]
+        for step_idx in range(1, num_steps):
+            changed = (history[step_idx] != history[step_idx - 1])
+            for i in torch.where(changed)[0]:
+                update_steps[i.item()].append(step_idx)
+        update_steps_all.append(update_steps)
 
     def update(frame):
-        for i, ax in enumerate(axes):
+        for i, (ax, log_ax) in enumerate(zip(grid_axes, logit_axes)):
             ax.clear()
-            ax.set_title(f"{strategies[i]} - Step {frame}", fontsize=10)
-            if frame >= histories[i].shape[0]:
-                step = histories[i][-1]
+            log_ax.clear()
+            history = histories[i]
+            solution = solutions[i]
+            first_step = history[0]
+            current_step = history[min(frame, history.shape[0] - 1)]
+            num_steps, seq_len = history.shape
+            update_steps = update_steps_all[i]
+            model = models[i]
+            noise_schedule = noise_schedules[i]
+            ckpt_ts = ts[i]
+            config = configs[i]
+            if config.model.puzzle_conditioning == 'in_context':
+                current_sample = torch.cat([first_step, current_step], dim=0).unsqueeze(0).to(device)
             else:
-                step = histories[i][frame]
-
-            grid = step.reshape(grid_size, grid_size)
-            sol_grid = solutions[i].reshape(grid_size, grid_size)
+                current_sample = current_step.unsqueeze(0).to(device)
+            logits = model(current_sample, ckpt_ts[-2 - min(frame, history.shape[0] - 2)])[0].cpu()
+            logits = logits[-current_step.shape[0]:, :]
+            logits[..., noise_schedule.mask_id:] = -1e6
+            if frame == 3:
+                print(f"t: {ckpt_ts[-2 - min(frame, history.shape[0] - 2)]}")
+                print(f"logits: {logits[42, :9]}")
+                print(f"current_sample: {current_sample[0]}")
+                print(f"current value: {current_step[42].item()}")
+                print(f"next value: {history[frame + 1, 42].item()}")
 
             ax.set_xticks([])
             ax.set_yticks([])
-            ax.imshow(np.zeros((grid_size, grid_size)), cmap='gray_r', vmin=0, vmax=9)
+            ax.set_xlim(-0.5, grid_size - 0.5)
+            ax.set_ylim(grid_size - 0.5, -0.5)
+            ax.set_aspect('equal')
 
             for j in range(grid_size + 1):
                 lw = 2 if j % box_size == 0 else 0.5
                 ax.axhline(j - 0.5, color='black', lw=lw)
                 ax.axvline(j - 0.5, color='black', lw=lw)
-            ax.set_xlim(-0.5, grid_size - 0.5)
-            ax.set_ylim(grid_size - 0.5, -0.5)
 
-            for (r, c), token in np.ndenumerate(grid):
-                if token == mask_token_id:
-                    text = "."
-                    color = "gray"
+            for idx in range(seq_len):
+                r, c = divmod(idx, grid_size)
+                updates = [s for s in update_steps[idx] if s <= frame]
+                num_updates = len(updates)
+                init_token = first_step[idx].item()
+                current_token = current_step[idx].item()
+                target_token = solution[idx].item()
+
+                if num_updates == 0:
+                    ax.add_patch(patches.Rectangle((c - 0.5, r - 0.5), 1, 1, color='gray', alpha=0.2))
                 else:
-                    text = str(token.item())
-                    if fixed_positions[i][r, c]:
-                        color = "black"
+                    for j, update_step in enumerate(updates):
+                        color = cmap(update_step / (num_steps - 1))
+                        width = 1.0 / num_updates
+                        ax.add_patch(
+                            patches.Rectangle(
+                                (c - 0.5 + j * width, r - 0.5),
+                                width, 1,
+                                color=color
+                            )
+                        )
+
+                if current_token == mask_token_id:
+                    text = "."
+                    digit_color = 'lightgray'
+                else:
+                    text = str(current_token)
+                    if init_token != mask_token_id:
+                        digit_color = 'black'
                     else:
-                        correct = token == sol_grid[r, c].item()
-                        color = "green" if correct else "red"
-                ax.text(c, r, text, ha='center', va='center', fontsize=12, color=color)
+                        digit_color = 'black' if current_token == target_token else 'red'
+
+                ax.text(c, r, text, ha='center', va='center', fontsize=12, color=digit_color)
+
+                if num_updates == 1:
+                    step_str = str(updates[0])
+                    ax.text(c - 0.4, r - 0.35, step_str, ha='left', va='top',
+                            fontsize=6, color='black', fontweight='normal')
+                elif num_updates > 1:
+                    step_str = f"{str(len(updates))}, {str(updates[0])} - {str(updates[-1])}"
+                    ax.text(c - 0.4, r - 0.35, step_str, ha='left', va='top',
+                            fontsize=6, color='black', fontweight='normal')
+
+            ax.set_title(f"{strategies[i]} - Step {frame}", fontsize=12)
+
+            # Visualize next update cell logits
+            next_updates = [(idx, min([s for s in update_steps[idx] if s > frame], default=None))
+                            for idx in range(seq_len)]
+            next_updates = [(idx, s) for idx, s in next_updates if s is not None]
+            if next_updates:
+                target_idx, update_step = min(next_updates, key=lambda x: x[1])
+                row, col = divmod(target_idx, grid_size)
+
+                ax.add_patch(
+                    patches.Rectangle(
+                        (col - 0.5, row - 0.5), 1, 1,
+                        edgecolor='red', linewidth=2.5, fill=False
+                    )
+                )
+
+                log_probs = logits[target_idx].softmax(0)[:9].numpy()
+                if frame == 3:
+                    print(f"logits: {log_probs}")
+                log_ax.bar(range(len(log_probs)), log_probs, color='blue')
+                log_ax.set_title(f"Next update: ({row + 1},{col + 1}) @ step {update_step}")
+                log_ax.set_xlabel("Token ID")
+                log_ax.set_ylabel("Prob")
+                log_ax.set_ylim(0, 1)
+                log_ax.set_xlim(-0.5, len(log_probs) - 0.5)
+                log_ax.set_xticks(range(len(log_probs)))
+            else:
+                log_ax.set_title("No more updates")
+                log_ax.axis('off')
 
     ani = animation.FuncAnimation(fig, update, frames=max_steps, repeat=False)
     ani.save(output_path, writer='pillow', fps=1)
@@ -233,6 +347,10 @@ def visualize_final_grid_with_update_gradient_multi(histories, mask_token_id, sa
                 step_str = str(updates[0])
                 ax.text(c - 0.4, r - 0.35, step_str, ha='left', va='top',
                         fontsize=6, color='black', fontweight='normal')
+            elif num_updates > 1:
+                step_str = f"{str(len(updates))}, {str(updates[0])} - {str(updates[-1])}"
+                ax.text(c - 0.4, r - 0.35, step_str, ha='left', va='top',
+                        fontsize=6, color='black', fontweight='normal')
 
         ax.set_title(f"{history_entry['strategy']}", fontsize=12)
 
@@ -245,8 +363,6 @@ def visualize_final_grid_with_update_gradient_multi(histories, mask_token_id, sa
     plt.savefig(save_path)
     plt.close()
     print(f"Saved image to {save_path}")
-
-
 
 def visualize_sampling_process(csv_file, mask_token_id, rows_to_visualize, visualization_type='print'):
     with open(csv_file, newline='') as f:
