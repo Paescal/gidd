@@ -3,7 +3,7 @@ defaults:
   - data: sudoku
   - model: 6M
   - optimizer: adam
-  - sampling: training_sampling_mdlm_adaptive_score_select_update
+  - sampling: training_sampling_mdlm_vanilla
   - compilation: compile_torch
   - _self_
 
@@ -19,7 +19,7 @@ training:
   train_batch_size: 128
   eval_batch_size: 64
   score_batch_size: 64
-  num_train_steps: 1_332_000 # 666_000 # should've been 668_000 for 50 epochs if only saved every 4000 steps but was 666_000
+  num_train_steps: 3_996_000 # 1_332_000 # 666_000 # should've been 668_000 for 50 epochs if only saved every 4000 steps but was 666_000
   lr_schedule: cosine
   warmup_steps: 10_000
   low_discrepancy_sampling: True

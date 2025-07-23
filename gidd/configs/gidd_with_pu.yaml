@@ -5,7 +5,7 @@ defaults:
   - data: sudoku
   - model: 6M
   - optimizer: adam
-  - sampling: training_sampling_gidd_selected_positions_decomposed_update_distribution
+  - sampling: training_sampling_gidd_independent_positions_decomposed_update_distribution
   - compilation: compile_torch
   - _self_
 
@@ -24,7 +24,7 @@ training:
   score_batch_size: 64
   # num_train_steps: 1 epoch = 1_889_993 / 64 = 29_532
   # for shah: 1 epoch = 1_704_462 samples, 1_704_462 / 128 = 13_316.109
-  num_train_steps: 1_332_000 # 666_000 # should've been 668_000 for 50 epochs if only saved every 4000 steps but was 666_000
+  num_train_steps: 3_996_000 # 1_332_000 # 666_000 # should've been 668_000 for 50 epochs if only saved every 4000 steps but was 666_000
   lr_schedule: cosine # [cosine, linear, constant]
   warmup_steps: 10_000 #10000
   low_discrepancy_sampling: True

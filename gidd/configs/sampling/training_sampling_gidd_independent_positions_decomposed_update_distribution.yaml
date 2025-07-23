@@ -1,0 +1,12 @@
+num_denoising_steps: 81
+"strategy": gidd_independent_positions_decomposed_update_distribution
+"score_mask_position": null
+"score_position_for_change": null
+"select_position": null
+"select_position_change": null
+"select_position_unmask": null
+"change_token": change_max
+"unmask_token": null
+"k": 1
+"gumbel_noise_coefficient": 0
+"self_correction": "none"
