@@ -36,86 +36,82 @@ def get_lr(config, lr, step):
 
 
 
-def get_position_metric(config, tokenizer):
-    match config.sampling.position_metric:
-        case "probs_to_change":
-            return partial(score_mask_position_max, tokenizer=tokenizer)
-        case "MDM_max":
-            return partial(score_mask_position_max, tokenizer=tokenizer)
-        case "MDM_margin":
-            return partial(score_mask_position_margin, tokenizer=tokenizer)
-        case "MDM_margin_relative":
-            return partial(position_metric_MDM_margin_relative, tokenizer=tokenizer)
-        case "max":
-            return position_metric_max
-        case "margin":
-            return position_metric_margin
-        case _:
-            raise ValueError(f"Unknown position metric: {config.sampling.position_metric}")
+# def get_position_metric(config, tokenizer):
+#     match config.sampling.position_metric:
+#         case "probs_to_change":
+#             return partial(score_mask_position_max, tokenizer=tokenizer)
+#         case "MDM_max":
+#             return partial(score_mask_position_max, tokenizer=tokenizer)
+#         case "MDM_margin":
+#             return partial(score_mask_position_margin, tokenizer=tokenizer)
+#         case "MDM_margin_relative":
+#             return partial(position_metric_MDM_margin_relative, tokenizer=tokenizer)
+#         case "max":
+#             return position_metric_max
+#         case "margin":
+#             return position_metric_margin
+#         case _:
+#             raise ValueError(f"Unknown position metric: {config.sampling.position_metric}")
 
-def get_position_sampling_strategy(config):
-    match config.sampling.position_sampling_strategy:
-        case "all":
-            return all_positions
-        case "independent":
-            return sample_positions_independently
-        case "top_k_gumbel":
-            return partial(sample_position_top_k_gumbel, k=config.sampling.position_sampling_strategy_args.top_k_gumbel.k, gumbel_noise_coefficient=config.sampling.position_sampling_strategy_args.top_k_gumbel.gumbel_noise_coefficient)
-        case "top_k":
-            return partial(sample_top_k, k=config.sampling.position_sampling_strategy_args.top_k, as_mask=True)
-        case "top_p":
-            return partial(sample_top_p, p=config.sampling.position_sampling_strategy_args.top_p, normalize_input=True, as_mask=True)
-        case "min_p":
-            return partial(sample_min_p, p=config.sampling.position_sampling_strategy_args.min_p, indices_only=True, as_mask=True)
-        case _:
-            raise ValueError(f"Unknown position sampling strategy: {config.sampling.position_sampling_strategy}")
+# def get_position_sampling_strategy(config):
+#     match config.sampling.position_sampling_strategy:
+#         case "all":
+#             return all_positions
+#         case "independent":
+#             return sample_positions_independently
+#         case "top_k_gumbel":
+#             return partial(sample_position_top_k_gumbel, k=config.sampling.position_sampling_strategy_args.top_k_gumbel.k, gumbel_noise_coefficient=config.sampling.position_sampling_strategy_args.top_k_gumbel.gumbel_noise_coefficient)
+#         case "top_k":
+#             return partial(sample_top_k, k=config.sampling.position_sampling_strategy_args.top_k, as_mask=True)
+#         case "top_p":
+#             return partial(sample_top_p, p=config.sampling.position_sampling_strategy_args.top_p, normalize_input=True, as_mask=True)
+#         case "min_p":
+#             return partial(sample_min_p, p=config.sampling.position_sampling_strategy_args.min_p, indices_only=True, as_mask=True)
+#         case _:
+#             raise ValueError(f"Unknown position sampling strategy: {config.sampling.position_sampling_strategy}")
         
-def get_token_sampling_strategy(config, tokenizer):
-    match config.sampling.token_sampling_strategy:
-        case "change_token_max":
-            return partial(sample_token_change_max, tokenizer=tokenizer)
-        case "MDM_max":
-            return partial(sample_token_MDM_max, tokenizer=tokenizer)
-        case "MDM_categorical":
-            return partial(sample_token_MDM_categorical, tokenizer=tokenizer)
-        case "categorical":
-            return sample_categorical
-        case "top_k":
-            return partial(sample_top_k, k=config.sampling.token_sampling_strategy_args.top_k)
-        case "top_p":
-            return partial(sample_top_p, p=config.sampling.token_sampling_strategy_args.top_p)
-        case "min_p":
-            return partial(sample_min_p, p=config.sampling.token_sampling_strategy_args.min_p)
-        case _:
-            raise ValueError(f"Unknown token sampling strategy: {config.sampling.token_sampling_strategy}")
+# def get_token_sampling_strategy(config, tokenizer):
+#     match config.sampling.token_sampling_strategy:
+#         case "change_token_max":
+#             return partial(sample_token_change_max, tokenizer=tokenizer)
+#         case "MDM_max":
+#             return partial(sample_token_MDM_max, tokenizer=tokenizer)
+#         case "MDM_categorical":
+#             return partial(sample_token_MDM_categorical, tokenizer=tokenizer)
+#         case "categorical":
+#             return sample_categorical
+#         case "top_k":
+#             return partial(sample_top_k, k=config.sampling.token_sampling_strategy_args.top_k)
+#         case "top_p":
+#             return partial(sample_top_p, p=config.sampling.token_sampling_strategy_args.top_p)
+#         case "min_p":
+#             return partial(sample_min_p, p=config.sampling.token_sampling_strategy_args.min_p)
+#         case _:
+#             raise ValueError(f"Unknown token sampling strategy: {config.sampling.token_sampling_strategy}")
 
 
 @torch.no_grad()
-def score_position_for_change_max(z_t, probs, tokenizer):
+def score_position_for_change_max(z_t, probs):
     probs = probs.clone()
     probs.scatter_(-1, z_t.unsqueeze(-1), 0)
-    probs[..., tokenizer.mask_token_id] = 0
     return torch.max(probs, dim=-1).values
 
 @torch.no_grad()
-def score_position_for_change_margin(z_t, probs, tokenizer):
+def score_position_for_change_margin(z_t, probs):
     probs = probs.clone()
     probs.scatter_(-1, z_t.unsqueeze(-1), 0)
-    probs[..., tokenizer.mask_token_id] = 0
     top_2 = torch.topk(probs, 2, dim=-1).values
     return top_2[..., 0] - top_2[..., 1]
 
 @torch.no_grad()
-def score_position_for_keep_where_confident_max(z_t, probs, tokenizer):
+def score_position_for_keep_where_confident_max(z_t, probs):
     probs = probs.clone()
-    probs[..., tokenizer.mask_token_id] = 0
     values, indices = torch.max(probs, dim=-1)
     return torch.where(z_t == indices, 0, values)
 
 @torch.no_grad()
-def score_position_for_keep_where_confident_margin(z_t, probs, tokenizer):
+def score_position_for_keep_where_confident_margin(z_t, probs):
     probs = probs.clone()
-    probs[..., tokenizer.mask_token_id] = 0
     top_2_values, top_2_indices = torch.topk(probs, 2, dim=-1)
     values = top_2_values[..., 0] - top_2_values[..., 1]
     indices = top_2_indices[..., 0]
@@ -123,63 +119,61 @@ def score_position_for_keep_where_confident_margin(z_t, probs, tokenizer):
 
 @torch.no_grad()
 def score_mask_position_max(z_t, probs, tokenizer):
-    is_mask_token = (z_t == tokenizer.mask_token_id)
     probs = probs.clone()
-    probs[..., tokenizer.mask_token_id] = 0
+    is_mask_token = (z_t == tokenizer.mask_token_id)
     metric = torch.max(probs, dim=-1).values
     return metric * is_mask_token
 
 @torch.no_grad()
 def score_mask_position_margin(z_t, probs, tokenizer):
-    is_mask_token = (z_t == tokenizer.mask_token_id)
     probs = probs.clone()
-    probs[..., tokenizer.mask_token_id] = 0
+    is_mask_token = (z_t == tokenizer.mask_token_id)
     top_2 = torch.topk(probs, 2, dim=-1).values
     metric = top_2[..., 0] - top_2[..., 1]
     return metric * is_mask_token
 
-@torch.no_grad()
-def position_metric_MDM_margin_relative(z_t, probs, tokenizer):
-    is_mask_token = (z_t == tokenizer.mask_token_id)
-    probs = probs.clone()
-    probs[..., tokenizer.mask_token_id] = 0
-    top_2 = torch.topk(probs, 2, dim=-1).values
-    metric = 1 - (top_2[..., 1] / top_2[..., 0]) # (1st - 2nd) / 1st = 1 - 2nd / 1st
-    return metric * is_mask_token
+# @torch.no_grad()
+# def position_metric_MDM_margin_relative(z_t, probs, tokenizer):
+#     is_mask_token = (z_t == tokenizer.mask_token_id)
+#     probs = probs.clone()
+#     probs[..., tokenizer.mask_token_id] = 0
+#     top_2 = torch.topk(probs, 2, dim=-1).values
+#     metric = 1 - (top_2[..., 1] / top_2[..., 0]) # (1st - 2nd) / 1st = 1 - 2nd / 1st
+#     return metric * is_mask_token
 
-@torch.no_grad()
-def position_metric_max(z_t, probs):
-    metric = torch.max(probs, dim=-1).values
-    return metric
+# @torch.no_grad()
+# def position_metric_max(z_t, probs):
+#     metric = torch.max(probs, dim=-1).values
+#     return metric
     
-    # Don't allow changing the token if the model thinks the current one is the best (this is flawed as is, because the mask token is always the best until almost the end)
-    # max_indices = torch.max(probs, dim=-1).indices
-    # z_t_is_max = (z_t == max_indices)
+#     # Don't allow changing the token if the model thinks the current one is the best (this is flawed as is, because the mask token is always the best until almost the end)
+#     # max_indices = torch.max(probs, dim=-1).indices
+#     # z_t_is_max = (z_t == max_indices)
 
-    # metric = torch.max(probs, dim=-1).values
-    # metric = torch.where(z_t_is_max, 0, metric)
-    # if diffusion_mask is not None:
-    #     return metric * diffusion_mask
-    # else:
-    #     return metric
+#     # metric = torch.max(probs, dim=-1).values
+#     # metric = torch.where(z_t_is_max, 0, metric)
+#     # if diffusion_mask is not None:
+#     #     return metric * diffusion_mask
+#     # else:
+#     #     return metric
 
-@torch.no_grad()
-def position_metric_margin(z_t, probs):
-    top_2 = torch.topk(probs, 2, dim=-1).values
-    metric = top_2[..., 0] - top_2[..., 1]
-    return metric
+# @torch.no_grad()
+# def position_metric_margin(z_t, probs):
+#     top_2 = torch.topk(probs, 2, dim=-1).values
+#     metric = top_2[..., 0] - top_2[..., 1]
+#     return metric
     
-    # Don't allow changing the token if the model thinks the current one is the best (this is flawed as is, because the mask token is always the best until almost the end)
-    # max_indices = torch.max(probs, dim=-1).indices
-    # z_t_is_max = (z_t == max_indices)
+#     # Don't allow changing the token if the model thinks the current one is the best (this is flawed as is, because the mask token is always the best until almost the end)
+#     # max_indices = torch.max(probs, dim=-1).indices
+#     # z_t_is_max = (z_t == max_indices)
 
-    # top_2 = torch.topk(probs, 2, dim=-1).values
-    # metric = top_2[..., 0] - top_2[..., 1]
-    # metric = torch.where(z_t_is_max, 0, metric)
-    # if diffusion_mask is not None:
-    #     return metric * diffusion_mask
-    # else:
-    #     return metric
+#     # top_2 = torch.topk(probs, 2, dim=-1).values
+#     # metric = top_2[..., 0] - top_2[..., 1]
+#     # metric = torch.where(z_t_is_max, 0, metric)
+#     # if diffusion_mask is not None:
+#     #     return metric * diffusion_mask
+#     # else:
+#     #     return metric
 
 @torch.no_grad()
 def all_positions(metric):
@@ -194,7 +188,7 @@ def sample_positions_independently(z_t, p):
 
 
 @torch.no_grad()
-def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0, generator=None):
+def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0):
     metric_is_non_zero_mask = metric != 0
     if gumbel_noise_coefficient > 0:
         # gumbel_noise = torch.distributions.gumbel.Gumbel(0, gumbel_noise_coefficient).sample(metric.shape).to(metric.device, dtype=metric.dtype)
@@ -203,8 +197,8 @@ def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0, generato
         gumbel_noise =  -(-(gumbel_noise_coefficient * torch.rand_like(metric)).log()).log()
         metric = metric + gumbel_noise * gumbel_noise_coefficient * metric_is_non_zero_mask
         # metric = metric - torch.logsumexp(metric, dim=-1, keepdim=True) + gumbel_noise * gumbel_noise_coefficient * metric_is_non_zero_mask
-    chosen_positions_indicies = torch.topk(metric, k, dim=-1).indices
-    top_k_mask = torch.zeros_like(metric, dtype=bool).scatter_(-1, chosen_positions_indicies, True)
+    chosen_positions_indices = torch.topk(metric, k, dim=-1).indices
+    top_k_mask = torch.zeros_like(metric, dtype=bool).scatter_(-1, chosen_positions_indices, True)
     top_k_mask = top_k_mask & metric_is_non_zero_mask
     return top_k_mask
 
@@ -218,100 +212,96 @@ def sample_categorical(probs, end_index=-1, generator=None):
     return samples
 
 @torch.no_grad()
-def sample_token_change_max(probs, z_t, tokenizer, generator=None):
+def sample_token_change_max(probs, z_t):
     probs = probs.clone()
     probs.scatter_(-1, z_t.unsqueeze(-1), 0)
-    probs[..., tokenizer.mask_token_id] = 0
     return torch.argmax(probs, dim=-1)
 
 @torch.no_grad()
-def sample_token_change_categorical(probs, z_t, tokenizer, generator=None):
+def sample_token_change_categorical(probs, z_t, tokenizer):
     probs = probs.clone()
     probs.scatter_(-1, z_t.unsqueeze(-1), 0)
-    probs[..., tokenizer.mask_token_id] = 0
     probs = probs / probs.sum(-1, keepdim=True)
-    return sample_categorical(probs, end_index=tokenizer.unk_token_id - 1, generator=generator)
+    return sample_categorical(probs, end_index=tokenizer.unk_token_id - 1)
 
 @torch.no_grad()
-def sample_token_MDM_max(probs, tokenizer, generator=None):
+def sample_token_MDM_max(probs):
     probs = probs.clone()
-    probs[..., tokenizer.mask_token_id] = 0
     return torch.argmax(probs, dim=-1)
 
 @torch.no_grad()
-def sample_token_MDM_categorical(probs, tokenizer, generator=None):
+def sample_token_MDM_categorical(probs, tokenizer):
     probs = probs.clone()
-    probs[..., tokenizer.mask_token_id] = 0
     probs = probs / probs.sum(-1, keepdim=True)
-    return sample_categorical(probs, end_index=tokenizer.unk_token_id - 1, generator=generator)
+    return sample_categorical(probs, end_index=tokenizer.unk_token_id - 1)
 
 
-@torch.no_grad()
-# TODO: all_candidates=bool is only a temporary variable for testing selecting all candidates
-def sample_top_k(metric, k, as_mask=False, all_candidates=False, generator=None):
-    top_k_thresholds = torch.topk(metric, k + 1, dim=-1).values[..., -1].unsqueeze(-1)
-    top_k_mask = metric > top_k_thresholds
-    if all_candidates:
-        if as_mask:
-            return top_k_mask
+# @torch.no_grad()
+# # TODO: all_candidates=bool is only a temporary variable for testing selecting all candidates
+# def sample_top_k(metric, k, as_mask=False, all_candidates=False, generator=None):
+#     top_k_thresholds = torch.topk(metric, k + 1, dim=-1).values[..., -1].unsqueeze(-1)
+#     top_k_mask = metric > top_k_thresholds
+#     if all_candidates:
+#         if as_mask:
+#             return top_k_mask
     
-    metric_masked = metric.masked_fill(~top_k_mask, 0)
-    metric_masked_normalized = metric_masked / metric_masked.sum(-1, keepdim=True) # TODO: this assumes that metric is not all zeros
-    chosen_indices = sample_categorical(metric_masked_normalized, generator=generator).unsqueeze(-1)
-    if as_mask:
-        return one_hot(chosen_indices.squeeze(-1), metric.shape[-1]).to(bool)
-    else:
-        return chosen_indices
+#     metric_masked = metric.masked_fill(~top_k_mask, 0)
+#     metric_masked_normalized = metric_masked / metric_masked.sum(-1, keepdim=True) # TODO: this assumes that metric is not all zeros
+#     chosen_indices = sample_categorical(metric_masked_normalized, generator=generator).unsqueeze(-1)
+#     if as_mask:
+#         return one_hot(chosen_indices.squeeze(-1), metric.shape[-1]).to(bool)
+#     else:
+#         return chosen_indices
 
-    # candidates_metrics, candidates_indices = torch.topk(metric, k, dim=-1)
-    # if all_candidates:
-    #     if as_mask:
-    #         candidates_mask = torch.zeros_like(metric, dtype=torch.bool, device=metric.device)
-    #         candidates_mask.scatter_(-1, candidates_indices, True)
-    #         return candidates_mask
-    # candidates_probs = candidates_metrics / candidates_metrics.sum(-1, keepdim=True)
+#     # candidates_metrics, candidates_indices = torch.topk(metric, k, dim=-1)
+#     # if all_candidates:
+#     #     if as_mask:
+#     #         candidates_mask = torch.zeros_like(metric, dtype=torch.bool, device=metric.device)
+#     #         candidates_mask.scatter_(-1, candidates_indices, True)
+#     #         return candidates_mask
+#     # candidates_probs = candidates_metrics / candidates_metrics.sum(-1, keepdim=True)
 
-    # chosen_candidates = sample_categorical(candidates_probs, generator=generator).unsqueeze(-1)
-    # chosen_indices = torch.gather(candidates_indices, -1, chosen_candidates).squeeze(-1)
-    # if as_mask:
-    #     return one_hot(chosen_indices, metric.shape[-1])
-    # else:
-    #     return chosen_indices
+#     # chosen_candidates = sample_categorical(candidates_probs, generator=generator).unsqueeze(-1)
+#     # chosen_indices = torch.gather(candidates_indices, -1, chosen_candidates).squeeze(-1)
+#     # if as_mask:
+#     #     return one_hot(chosen_indices, metric.shape[-1])
+#     # else:
+#     #     return chosen_indices
 
-@torch.no_grad()
-def sample_top_p(metric, p, as_mask=False, normalize_input=False, generator=None):
-    if normalize_input:
-        metric = metric / metric.sum(-1, keepdim=True)
+# @torch.no_grad()
+# def sample_top_p(metric, p, as_mask=False, normalize_input=False, generator=None):
+#     if normalize_input:
+#         metric = metric / metric.sum(-1, keepdim=True)
 
-    sorted_metric, sorted_indices = torch.sort(metric, dim=-1, descending=True)
-    cumulative_metrics = sorted_metric.cumsum(-1)
-    cumulative_metrics[..., -1] = 1 + 1e-4
-    sorted_indices_to_ignore = cumulative_metrics >= p
-    sorted_indices_to_ignore[..., 1:] = sorted_indices_to_ignore.clone()[..., :-1]
-    sorted_indices_to_ignore[..., 0] = False
-    masked_sorted_metrics = sorted_metric.masked_fill_(sorted_indices_to_ignore, 0)
-    masked_sorted_metrics_normalize = masked_sorted_metrics / masked_sorted_metrics.sum(-1, keepdim=True)
+#     sorted_metric, sorted_indices = torch.sort(metric, dim=-1, descending=True)
+#     cumulative_metrics = sorted_metric.cumsum(-1)
+#     cumulative_metrics[..., -1] = 1 + 1e-4
+#     sorted_indices_to_ignore = cumulative_metrics >= p
+#     sorted_indices_to_ignore[..., 1:] = sorted_indices_to_ignore.clone()[..., :-1]
+#     sorted_indices_to_ignore[..., 0] = False
+#     masked_sorted_metrics = sorted_metric.masked_fill_(sorted_indices_to_ignore, 0)
+#     masked_sorted_metrics_normalize = masked_sorted_metrics / masked_sorted_metrics.sum(-1, keepdim=True)
 
-    chosen_sorted_indices = sample_categorical(masked_sorted_metrics_normalize, generator=generator).unsqueeze(-1)
-    chosen_indices = torch.gather(sorted_indices, -1, chosen_sorted_indices).squeeze(-1)
-    if as_mask:
-        return one_hot(chosen_indices, metric.shape[-1])
-    else:
-        return chosen_indices
+#     chosen_sorted_indices = sample_categorical(masked_sorted_metrics_normalize, generator=generator).unsqueeze(-1)
+#     chosen_indices = torch.gather(sorted_indices, -1, chosen_sorted_indices).squeeze(-1)
+#     if as_mask:
+#         return one_hot(chosen_indices, metric.shape[-1])
+#     else:
+#         return chosen_indices
 
-@torch.no_grad()
-def sample_min_p(metric, p, as_mask=False, generator=None):
-    max_metric = torch.max(metric, dim=-1, keepdim=True).values
-    metric_threshold = max_metric.expand_as(metric) * p
-    metrics_to_ignore = metric < metric_threshold
-    masked_metric = metric.clone().masked_fill_(metrics_to_ignore, 0)
-    masked_metric_normalized = masked_metric / masked_metric.sum(-1, keepdim=True)
+# @torch.no_grad()
+# def sample_min_p(metric, p, as_mask=False, generator=None):
+#     max_metric = torch.max(metric, dim=-1, keepdim=True).values
+#     metric_threshold = max_metric.expand_as(metric) * p
+#     metrics_to_ignore = metric < metric_threshold
+#     masked_metric = metric.clone().masked_fill_(metrics_to_ignore, 0)
+#     masked_metric_normalized = masked_metric / masked_metric.sum(-1, keepdim=True)
 
-    chosen_indices = sample_categorical(masked_metric_normalized, generator=generator)
-    if as_mask:
-        return one_hot(chosen_indices, metric.shape[-1])
-    else:
-        return chosen_indices
+#     chosen_indices = sample_categorical(masked_metric_normalized, generator=generator)
+#     if as_mask:
+#         return one_hot(chosen_indices, metric.shape[-1])
+#     else:
+#         return chosen_indices
 
 @torch.no_grad()
 def correct_cells_score(samples_tokenized, solutions_tokenized):

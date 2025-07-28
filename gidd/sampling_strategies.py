@@ -27,19 +27,19 @@ def get_score_mask_position(config, tokenizer):
         case "MDM_margin":
             return partial(score_mask_position_margin, tokenizer=tokenizer)
 
-def get_score_position_for_change(config, tokenizer):
+def get_score_position_for_change(config):
     match config.sampling.score_position_for_change:
         case "change_max":
-            return partial(score_position_for_change_max, tokenizer=tokenizer)
+            return partial(score_position_for_change_max)
         case "change_margin":
-            return partial(score_position_for_change_margin, tokenizer=tokenizer)
+            return partial(score_position_for_change_margin)
 
-def get_score_position_for_keep_where_confident(config, tokenizer):
+def get_score_position_for_keep_where_confident(config):
     match config.sampling.score_position_for_change:
         case "change_max":
-            return partial(score_position_for_keep_where_confident_max, tokenizer=tokenizer)
+            return partial(score_position_for_keep_where_confident_max)
         case "change_margin":
-            return partial(score_position_for_keep_where_confident_margin, tokenizer=tokenizer)
+            return partial(score_position_for_keep_where_confident_margin)
 
 def get_select_position(config, arg_name='select_position'):
     match arg_name:
@@ -63,14 +63,14 @@ def get_select_position(config, arg_name='select_position'):
 def get_unmask_token(config, tokenizer):
     match config.sampling.unmask_token:
         case "MDM_max":
-            return partial(sample_token_MDM_max, tokenizer=tokenizer)
+            return partial(sample_token_MDM_max)
         case "MDM_categorical":
             return partial(sample_token_MDM_categorical, tokenizer=tokenizer)
 
 def get_change_token(config, tokenizer):
     match config.sampling.change_token:
         case "change_max":
-            return partial(sample_token_change_max, tokenizer=tokenizer)
+            return partial(sample_token_change_max)
         case "change_categorical":
             return partial(sample_token_change_categorical, tokenizer=tokenizer)
 
@@ -118,12 +118,12 @@ def get_sampling_strategy(config, tokenizer, noise_schedule=None, min_p=None):
                            unmask_token=get_unmask_token(config, tokenizer),)
         case "gidd_change_based_on_model_confidence_to_change":
             return partial(gidd_change_based_on_model_confidence_to_change,
-                           score_position_for_change=get_score_position_for_change(config, tokenizer),
+                           score_position_for_change=get_score_position_for_change(config),
                            select_position=get_select_position(config),
                            change_token=get_change_token(config, tokenizer),)
         case "gidd_keep_where_confident":
             return partial(gidd_keep_where_confident,
-                           score_position_for_keep_where_confident=get_score_position_for_keep_where_confident(config, tokenizer),
+                           score_position_for_keep_where_confident=get_score_position_for_keep_where_confident(config),
                            select_position=get_select_position(config),
                            change_token=get_change_token(config, tokenizer),)
 
@@ -177,7 +177,7 @@ def gidd_emulate_mdlm_adaptive_score_select_update(probs, z_t, t, s, i, diffusio
         next_z_t = probs.argmax(-1)
     else:
         score = score_mask_position(z_t, probs) * diffusion_mask
-        update_positions = select_position(score)
+        update_positions = select_position(score) * (z_t == tokenizer.mask_token_id)
         next_z_t = unmask_token(probs)
     return update_positions, next_z_t
 
