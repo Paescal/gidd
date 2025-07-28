@@ -166,7 +166,7 @@ def gidd_emulate_mdlm_vanilla(probs, z_t, t, s, i, diffusion_mask, tokenizer, no
         alpha_t, _ = noise_schedule.get_alpha_betapi(t)
         alpha_s, _ = noise_schedule.get_alpha_betapi(s)
         
-        update_positions = sample_positions_independently(z_t, (alpha_s - alpha_t) / (1 - alpha_t))
+        update_positions = sample_positions_independently(z_t, (alpha_s - alpha_t) / (1 - alpha_t)) * (z_t == tokenizer.mask_token_id)
         next_z_t = unmask_token(probs)
     return update_positions, next_z_t # TODO: in last iteration, next_z_t should be selected as max logit, see mdlm implementation
 
