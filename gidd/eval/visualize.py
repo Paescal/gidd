@@ -109,7 +109,6 @@ def visualize_history_as_video_multi(histories, mask_token_id, output_path="outp
     
     models = []
     noise_schedules = []
-    ts = []
     configs = []
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     for h in histories:
@@ -118,15 +117,20 @@ def visualize_history_as_video_multi(histories, mask_token_id, output_path="outp
         model, noise_schedule, ckpt_tokenizer, ckpt_config = load_checkpoint(model_path, device=device)
         models.append(model)
         noise_schedules.append(noise_schedule)
-        t_eps = float(ckpt_config.model.t_eps)
-        ckpt_ts = torch.linspace(0, 1, ckpt_config.sampling.num_denoising_steps + 1, device=device).unsqueeze(-1)
-        ckpt_ts = (1 - 2 * t_eps) * ckpt_ts + t_eps
-        ts.append(ckpt_ts)
         configs.append(ckpt_config)
     
     histories = [h['history'] for h in histories]
 
     max_steps = max(h.shape[0] for h in histories)
+
+    ts = []
+    for ckpt_config in configs:
+        t_eps = float(ckpt_config.model.t_eps)
+        ckpt_ts = torch.linspace(1, 0, ckpt_config.sampling.num_denoising_steps + 1, device=device).unsqueeze(-1)
+        ckpt_ts = (1 - 2 * t_eps) * ckpt_ts + t_eps
+        ckpt_ts = torch.cat([ckpt_ts, torch.full((max_steps - ckpt_ts.shape[0] + 1, 1), t_eps, device=device)], dim=0)
+        ts.append(ckpt_ts)
+
     fig, axes = plt.subplots(
         2, num_samples, figsize=(6 * num_samples, 8),
         gridspec_kw={'height_ratios': [4, 1]}, constrained_layout=True
@@ -174,15 +178,15 @@ def visualize_history_as_video_multi(histories, mask_token_id, output_path="outp
                 current_sample = torch.cat([first_step, current_step], dim=0).unsqueeze(0).to(device)
             else:
                 current_sample = current_step.unsqueeze(0).to(device)
-            logits = model(current_sample, ckpt_ts[-2 - min(frame, history.shape[0] - 2)])[0].cpu()
+            logits = model(current_sample, ckpt_ts[frame + 1])[0].cpu()
             logits = logits[-current_step.shape[0]:, :]
             logits[..., noise_schedule.mask_id:] = -1e6
-            if frame == 3:
-                print(f"t: {ckpt_ts[-2 - min(frame, history.shape[0] - 2)]}")
-                print(f"logits: {logits[42, :9]}")
-                print(f"current_sample: {current_sample[0]}")
-                print(f"current value: {current_step[42].item()}")
-                print(f"next value: {history[frame + 1, 42].item()}")
+            # if frame == 3: # debugging for checkpoints/gidd_0_2/100_epochs,gidd_keep_where_confident,"score_position_for_change=change_max select_position=top_k_gumbel change_token=change_max k=1 gumbel_noise_coefficient=0 self_correction=none dataset=hard num_samples=64 num_denoising_steps=81 batch_size=64 min_p=0 compile_torch=0 seed=1"
+            #     print(f"t: {ckpt_ts[frame + 1]}")
+            #     print(f"logits: {logits[42, :9]}")
+            #     print(f"current_sample: {current_sample[0]}")
+            #     print(f"current value: {current_step[42].item()}")
+            #     print(f"next value: {history[frame + 1, 42].item()}")
 
             ax.set_xticks([])
             ax.set_yticks([])
