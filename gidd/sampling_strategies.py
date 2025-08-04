@@ -126,6 +126,9 @@ def get_sampling_strategy(config, tokenizer, noise_schedule=None, min_p=None):
                            score_position_for_keep_where_confident=get_score_position_for_keep_where_confident(config),
                            select_position=get_select_position(config),
                            change_token=get_change_token(config, tokenizer),)
+        case "gidd_flattened":
+            return partial(gidd_flattened,
+                           tokenizer=tokenizer,)
 
 #################### MDLM sampling strategies ####################
 @torch.no_grad()
@@ -210,8 +213,19 @@ def gidd_original(probs, z_t, t, s, i, diffusion_mask, tokenizer, noise_schedule
             q_st = (1 - is_small) * q_st
             q_st = q_st / q_st.sum(-1, keepdim=True)
         
+        is_masked = (z_t == tokenizer.mask_token_id)
+        q_st[:, :, tokenizer.mask_token_id] = is_masked.to(dtype=q_st.dtype) * q_st[:, :, tokenizer.mask_token_id]
+        q_st = q_st / q_st.sum(-1, keepdim=True)
+        
         update_positions = torch.ones_like(z_t, dtype=torch.bool)
         next_z_t = sample_categorical(q_st, end_index=tokenizer.unk_token_id - 1)
+        # if i == 76 or i == 75:
+        #     print(f"q_st: {q_st[0, 81, :10]}")
+        #     print(f"q_ts: {q_ts[0, 81, :10]}")
+        #     print(f"q_s: {q_s[0, 81, :10]}")
+        #     print(f"q_zt: {q_zt[0, 81].item()}")
+        #     print(f"z_t: {z_t[0, 81].item()}")
+        #     print(f"next_z_t: {next_z_t[0, 81].item()}")
     return update_positions, next_z_t
 
 @torch.no_grad()
@@ -325,3 +339,48 @@ def gidd_keep_where_confident(probs, z_t, t, s, i, diffusion_mask, score_positio
     update_positions = select_position(score)
     next_z_t = change_token(probs, z_t)
     return update_positions, next_z_t
+
+def gidd_flattened(probs:torch.Tensor, z_t, t, s, i, num_denoising_steps, diffusion_mask, max_score, tokenizer):
+    # set probs to zero where diffusion_mask is zero
+    # flatten probs
+    # get the (num_denoising_steps - i) most probable tokens
+    # undo the flattening
+    # if no token is selected from a position, next_z_t will contain the same token as z_t, reset the max score for this position
+    # if exactly one token is selected from a position, next_z_t will contain that, reset the max score for this position
+    # if more than one token is selected from a position use the following process to determine the token for next_z_t:
+    # - compute a score as (probability of most probable token - probability of token in z_t)
+    # - if it is greater than the previous max of this difference, then select the most probable token and update the max score
+    # - otherwise keep the token from z_t
+    # return the positions to update, next_z_t and the updated max_score
+    seq_len = probs.shape[-2]
+    vocab_size = probs.shape[-1]
+    probs = probs * diffusion_mask.unsqueeze(-1)
+    probs_flattened = probs.view((-1, seq_len * vocab_size))
+    num_tokens = num_denoising_steps - i
+    topk_indices = probs_flattened.topk(num_tokens, dim=-1, sorted=False).indices
+    selected_mask = torch.zeros_like(probs_flattened, dtype=torch.bool)
+    selected_mask.scatter_(-1, topk_indices, True)
+    selected_mask = selected_mask.view(probs.shape)
+    update_positions = selected_mask.any(dim=-1)
+    has_multiple_selected_tokens = selected_mask.sum(dim=-1) > 1
+    largest_probs, largest_probs_indices = probs.max(dim=-1)
+    probs_at_z_t = probs.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
+    score = largest_probs - probs_at_z_t
+    score = torch.where(has_multiple_selected_tokens, score, torch.zeros_like(score))
+    has_new_max = score > max_score
+    max_score = torch.where(has_new_max, score, max_score)
+    max_score = torch.where(has_multiple_selected_tokens, max_score, torch.zeros_like(max_score))
+    # next_z_t = torch.where(has_new_max, largest_probs_indices, z_t) # alternative
+    next_z_t = torch.where(has_new_max, largest_probs_indices, tokenizer.mask_token_id)
+    next_z_t = torch.where(update_positions & ~has_multiple_selected_tokens, largest_probs_indices, next_z_t)
+    # if num_tokens == 2:
+    #     # next_z_t_for_print = torch.where(diffusion_mask.bool(), next_z_t, 9)
+    #     print(f"next_z_t: {next_z_t[0, 81:]}")
+    #     # print(f"next_z_t for print: {next_z_t_for_print[0, 81:]}")
+    #     torch.set_printoptions(threshold=100_000)
+    #     print(f"selected_mask: {selected_mask[0, 81:, :9].to(dtype=int)}")
+    #     torch.set_printoptions(profile="default")
+    #     print(f"largest_probs: {largest_probs[0, 81:]}")
+    #     print(f"num update tokens: {update_positions[0, 81:].sum().item()}")
+    #     print(f"num unmasked tokens: {(next_z_t[0, 81:] != tokenizer.mask_token_id).sum().item()}")
+    return update_positions, next_z_t, max_score

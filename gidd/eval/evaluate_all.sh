@@ -23,12 +23,15 @@ checkpoints=(
     # "2025-06-13/15-04-32/checkpoints/latest/ gidd 0.2"
     # "2025-06-11/18-28-57/checkpoints/latest/ mdlm -"
     # "2025-06-01/17-31-45/checkpoints/latest/ gidd 0"
-    "checkpoints/mdlm/50_epochs mdlm -"
-    "checkpoints/mdlm/100_epochs mdlm -"
-    "checkpoints/gidd_0/50_epochs gidd 0"
-    "checkpoints/gidd_0/100_epochs gidd 0"
-    "checkpoints/gidd_0_2/50_epochs gidd 0.2"
-    "checkpoints/gidd_0_2/100_epochs gidd 0.2"
+    # "checkpoints/mdlm/50_epochs mdlm -"
+    # "checkpoints/mdlm/100_epochs mdlm -"
+    # "checkpoints/mdlm/300_epochs mdlm -"
+    # "checkpoints/gidd_0/50_epochs gidd 0"
+    # "checkpoints/gidd_0/100_epochs gidd 0"
+    # "checkpoints/gidd_0/300_epochs gidd 0"
+    # "checkpoints/gidd_0_2/50_epochs gidd 0.2"
+    # "checkpoints/gidd_0_2/100_epochs gidd 0.2"
+    "checkpoints/gidd_0_2/300_epochs gidd 0.2"
 )
 datasets=(
     "easy"
@@ -44,6 +47,7 @@ strategies=(
     "gidd_selected_positions_decomposed_update_distribution"
     "gidd_change_based_on_model_confidence_to_change"
     "gidd_keep_where_confident"
+    # "gidd_flattened"
 )
 score_mask_positions=(
     "MDM_max"
@@ -299,6 +303,13 @@ if [ $build_combinations_file = true ]; then
                                     fi
                                 done
                             done
+                        fi
+                    fi
+
+                    # gidd_flattened
+                    if [[ " ${strategies[@]} " =~ " gidd_flattened " ]]; then
+                        if (( $(echo "$noise > 0" | bc -l) )); then
+                            echo "$ckpt,gidd_flattened,$suffix" >> $combinations_file
                         fi
                     fi
                 fi

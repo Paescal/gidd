@@ -7,7 +7,7 @@ export VECLIB_MAXIMUM_THREADS=3
 
 num_jobs=6
 
-num_samples=64
+num_samples=6400
 num_denoising_steps=81
 batch_size=64
 min_p=0
@@ -23,12 +23,15 @@ checkpoints=(
     # "2025-06-13/15-04-32/checkpoints/latest/ gidd 0.2"
     # "2025-06-11/18-28-57/checkpoints/latest/ mdlm -"
     # "2025-06-01/17-31-45/checkpoints/latest/ gidd 0"
-    # "checkpoints/gidd_0/50_epochs gidd 0"
-    # "checkpoints/gidd_0_2/50_epochs gidd 0.2"
     # "checkpoints/mdlm/50_epochs mdlm -"
-    # "checkpoints/gidd_0/100_epochs gidd 0"
-    "checkpoints/gidd_0_2/100_epochs gidd 0.2"
     # "checkpoints/mdlm/100_epochs mdlm -"
+    # "checkpoints/mdlm/300_epochs mdlm -"
+    # "checkpoints/gidd_0/50_epochs gidd 0"
+    # "checkpoints/gidd_0/100_epochs gidd 0"
+    # "checkpoints/gidd_0/300_epochs gidd 0"
+    # "checkpoints/gidd_0_2/50_epochs gidd 0.2"
+    # "checkpoints/gidd_0_2/100_epochs gidd 0.2"
+    "checkpoints/gidd_0_2/300_epochs gidd 0.2"
 )
 datasets=(
     # "easy"
@@ -43,15 +46,16 @@ strategies=(
     # "gidd_independent_positions_decomposed_update_distribution"
     # "gidd_selected_positions_decomposed_update_distribution"
     # "gidd_change_based_on_model_confidence_to_change"
-    "gidd_keep_where_confident"
+    # "gidd_keep_where_confident"
+    "gidd_flattened"
 )
 score_mask_positions=(
     "MDM_max"
-    # "MDM_margin"
+    "MDM_margin"
 )
 score_positions_for_change=(
     "change_max"
-    # "change_margin"
+    "change_margin"
 )
 select_positions=(
     "top_k_gumbel"
@@ -61,11 +65,11 @@ select_positions_to_change=(
 )
 unmask_tokens=(
     "MDM_max"
-    # "MDM_categorical"
+    "MDM_categorical"
 )
 change_tokens=(
     "change_max"
-    # "change_categorical"
+    "change_categorical"
 )
 ks=(
     "1"
@@ -75,7 +79,7 @@ gumbel_noise_coefficients=(
 )
 self_correction_strategies=(
     "none"
-    "original"
+    # "original"
     # "oscillation_prevention_fast"
     # "oscillation_prevention_slow"
     # "keep_where_confident"
@@ -300,6 +304,13 @@ if [ $build_combinations_file = true ]; then
                                     fi
                                 done
                             done
+                        fi
+                    fi
+
+                    # gidd_flattened
+                    if [[ " ${strategies[@]} " =~ " gidd_flattened " ]]; then
+                        if (( $(echo "$noise > 0" | bc -l) )); then
+                            echo "$ckpt,gidd_flattened,$suffix" >> $combinations_file
                         fi
                     fi
                 fi

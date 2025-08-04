@@ -140,8 +140,8 @@ def visualize_history_as_video_multi(histories, mask_token_id, output_path="outp
         grid_axes = [axes[0]]
         logit_axes = [axes[1]]
     else:
-        grid_axes = axes[0]
-        logit_axes = axes[1]
+        grid_axes = list(axes[0])
+        logit_axes = list(axes[1])
 
     for ax in grid_axes + logit_axes:
         ax.axis('off')
@@ -260,8 +260,8 @@ def visualize_history_as_video_multi(histories, mask_token_id, output_path="outp
                 )
 
                 log_probs = logits[target_idx].softmax(0)[:9].numpy()
-                if frame == 3:
-                    print(f"logits: {log_probs}")
+                # if frame == 3: # debugging for checkpoints/gidd_0_2/100_epochs,gidd_keep_where_confident,"score_position_for_change=change_max select_position=top_k_gumbel change_token=change_max k=1 gumbel_noise_coefficient=0 self_correction=none dataset=hard num_samples=64 num_denoising_steps=81 batch_size=64 min_p=0 compile_torch=0 seed=1"
+                #     print(f"logits: {log_probs}")
                 log_ax.bar(range(len(log_probs)), log_probs, color='blue')
                 log_ax.set_title(f"Next update: ({row + 1},{col + 1}) @ step {update_step}")
                 log_ax.set_xlabel("Token ID")

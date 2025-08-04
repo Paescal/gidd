@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import tqdm.auto as tqdm
 
 from gidd.diffusion_process import NoiseSchedule
-from gidd.utils import get_position_metric, get_position_sampling_strategy, get_token_sampling_strategy, sample_categorical
+from gidd.utils import sample_categorical
 from gidd.sampling_strategies import get_sampling_strategy
 from gidd.self_correction_strategies import self_correction_original, self_correction_original_oscillation_prevention, self_correction_keep_where_confident
 
@@ -97,8 +97,9 @@ class GiddSampler(Sampler):
             # self.token_sampling_strategy = get_token_sampling_strategy(config, tokenizer)
             self.sampling_strategy = get_sampling_strategy(config, tokenizer, noise_schedule=noise_schedule, min_p=min_p)
             self.config = config
+            self.max_score = None
 
-        def forward(self, z_t, t, s, i=None, diffusion_mask=None, puzzle_conditioning=None, sequence_length_without_conditioning=0):
+        def forward(self, z_t, t, s, i=None, num_denoising_steps=None, diffusion_mask=None, puzzle_conditioning=None, sequence_length_without_conditioning=0):
             is_fully_denoised = (z_t[:, -sequence_length_without_conditioning:] != self.tokenizer.mask_token_id).all(dim=1)
             # if is_fully_denoised.sum() != 0:
             #     print(f"is_fully_denoised: {is_fully_denoised.sum()}")
@@ -106,13 +107,18 @@ class GiddSampler(Sampler):
             logits = self.model(z_t, t, puzzle_conditioning=puzzle_conditioning)
             logits[..., self.tokenizer.mask_token_id:] = -1e6
             probs = logits.softmax(-1)
-            if i == 77:
-                print(f"probs: {probs[4, 123, :9]}")
-                print(f"logits: {logits[4, 123, :9]}")
-                print(f"t: {t}")
-                print(f"z_t: {z_t[4]}")
-
-            update_positions, next_z_t = self.sampling_strategy(probs, z_t, t, s, i, diffusion_mask)
+            # if i == 77: # debugging for checkpoints/gidd_0_2/100_epochs,gidd_keep_where_confident,"score_position_for_change=change_max select_position=top_k_gumbel change_token=change_max k=1 gumbel_noise_coefficient=0 self_correction=none dataset=hard num_samples=64 num_denoising_steps=81 batch_size=64 min_p=0 compile_torch=0 seed=1"
+            #     print(f"probs: {probs[4, 123, :9]}")
+            #     print(f"logits: {logits[4, 123, :9]}")
+            #     print(f"t: {t}")
+            #     print(f"z_t: {z_t[4]}")
+            if self.config.sampling.strategy == "gidd_flattened":
+                if self.max_score is None:
+                    self.max_score = torch.zeros_like(z_t, dtype=probs.dtype)
+                update_positions, next_z_t, max_score = self.sampling_strategy(probs, z_t, t, s, i, num_denoising_steps, diffusion_mask, self.max_score)
+                self.max_score = max_score
+            else:
+                update_positions, next_z_t = self.sampling_strategy(probs, z_t, t, s, i, diffusion_mask)
             # update_positions, next_z_t = self.sampling_strategy(probs, z_t, t, s, diffusion_mask)
             update_positions = update_positions * diffusion_mask
             update_positions = update_positions & ~is_fully_denoised.unsqueeze(-1)
@@ -152,11 +158,11 @@ class GiddSampler(Sampler):
         for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
             # print(f"sampling step {i}")
             # old_z_t = z_t.clone()
-            if i > num_denoising_steps - 5:
-                print(i, z_t[4, 123].item())
-            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], i=i, diffusion_mask=diffusion_mask, puzzle_conditioning=puzzle_conditioning, sequence_length_without_conditioning=max_length)
-            if i > num_denoising_steps - 5:
-                print(i, z_t[4, 123].item())
+            # if i > num_denoising_steps - 5: # debugging for checkpoints/gidd_0_2/100_epochs,gidd_keep_where_confident,"score_position_for_change=change_max select_position=top_k_gumbel change_token=change_max k=1 gumbel_noise_coefficient=0 self_correction=none dataset=hard num_samples=64 num_denoising_steps=81 batch_size=64 min_p=0 compile_torch=0 seed=1"
+            #     print(i, z_t[4, 123].item())
+            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], i=i, num_denoising_steps=num_denoising_steps, diffusion_mask=diffusion_mask, puzzle_conditioning=puzzle_conditioning, sequence_length_without_conditioning=max_length)
+            # if i > num_denoising_steps - 5: # debugging for checkpoints/gidd_0_2/100_epochs,gidd_keep_where_confident,"score_position_for_change=change_max select_position=top_k_gumbel change_token=change_max k=1 gumbel_noise_coefficient=0 self_correction=none dataset=hard num_samples=64 num_denoising_steps=81 batch_size=64 min_p=0 compile_torch=0 seed=1"
+            #     print(i, z_t[4, 123].item())
             # print(f"sampling step {i} done")
             
             # puzzle_string = ''
@@ -174,9 +180,9 @@ class GiddSampler(Sampler):
             # print((f"Fully unmasked: {(z_t[sample_in_batch, -max_length:] != mask_token_id).all()}"))
             if keep_history:
                 history.append(z_t.clone())
-            if (z_t[:, -max_length:] != mask_token_id).all():
-                # print(f"All tokens unmasked at step {i}, stopping early.")
-                break
+            # if (z_t[:, -max_length:] != mask_token_id).all():
+            #     print(f"All tokens unmasked at step {i}, stopping early.")
+            #     break
         
         self_correction = self.sampling_step.config.sampling.self_correction
         if self_correction == "none":
