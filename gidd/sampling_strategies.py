@@ -384,3 +384,39 @@ def gidd_flattened(probs:torch.Tensor, z_t, t, s, i, num_denoising_steps, diffus
     #     print(f"num update tokens: {update_positions[0, 81:].sum().item()}")
     #     print(f"num unmasked tokens: {(next_z_t[0, 81:] != tokenizer.mask_token_id).sum().item()}")
     return update_positions, next_z_t, max_score
+
+
+def gidd_prob_to_recover_data(probs, z_t, t, s, i, diffusion_mask, tokenizer, noise_schedule, min_p):
+    # denoising event: p(z_s = x, z_t != x)
+    # p(z_s = x) = p(z_t = x) * p(z_s = x | z_t = x) + p(z_t != x) * p(z_s = x | z_t != x)
+
+    # p(z_s = x, z_t != x) = q_t|s(z_t != x | z_s = x) * q_s(z_s = x | x) / q_t(z_t != x | x)
+    # = (alpha_s + beta_pi_s_at_zt) * beta_pi_ts_at_zt / beta_pi_t_at_zt # independent of prediction for x
+
+    # p(z_s = x | z_t = x) = q_t|s(z_t = x | z_s = x) * q_s(z_s = x | x) / q_t(z_t = x | x)
+    # = (alpha_ts * z_s + beta_pi_ts) * (alpha_s + beta_pi_s) / (alpha_t + beta_pi_t)
+    # use x_theta = probs for z_s and take the element at z_t:
+    # (alpha_ts * x_theta_at_zt + beta_pi_ts_at_zt) * (alpha_s + beta_pi_s_at_zt) / (alpha_t + beta_pi_t_at_zt)
+
+    alpha_t, beta_pi_t = noise_schedule.get_alpha_betapi(t)
+    alpha_s, beta_pi_s = noise_schedule.get_alpha_betapi(s)
+
+    alpha_ts = alpha_t / alpha_s
+    beta_pi_ts = beta_pi_t - alpha_t / alpha_s * beta_pi_s
+
+    vocab_size_architecturally = len(tokenizer)
+    vz_t = F.one_hot(z_t, num_classes=vocab_size_architecturally)
+    beta_pi_ts_at_zt = beta_pi_ts.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
+    beta_pi_s_at_zt = beta_pi_s.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
+    beta_pi_t_at_zt = beta_pi_t.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
+
+    p_zs_x_cond_zt_nx = (alpha_s + beta_pi_s_at_zt) * (beta_pi_ts_at_zt / beta_pi_t_at_zt)
+
+    p_zs_x_cond_zt_x = (alpha_ts * x_theta_at_zt + beta_pi_ts_at_zt) * (alpha_s + beta_pi_s_at_zt) / (alpha_t + beta_pi_t_at_zt)
+
+    x_theta_at_zt = probs.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
+    p_zt_x = x_theta_at_zt # either from model (x_theta_at_zt) or from recurrence (p_zs_x of previous step)
+    p_zt_nx = 1 - p_zt_x
+    p_zs_x = p_zt_x * p_zs_x_cond_zt_x + p_zt_nx * p_zs_x_cond_zt_nx
+
+    pass
