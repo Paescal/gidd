@@ -2,6 +2,7 @@ import pandas as pd
 import hydra
 import tqdm
 import torch
+from functools import partial
 
 from gidd.utils import parse_dtype
 from gidd.checkpoints import load_checkpoint
@@ -107,6 +108,36 @@ class PositionBackoffHandler:
 #     # num_changes = (initial_z_t != z_t).sum().item()
 #     print(f"Final accuracy: {acc}")
 #     return z_t, history
+
+
+def get_self_correction(config):
+    match config.sampling.self_correction:
+        case "none":
+            return None
+        case "original":
+            temp = 1
+            tokens_per_step = 1
+            return partial(self_correction_original, temp=temp, tokens_per_step=tokens_per_step)
+        case "oscillation_prevention_fast":
+            temp = 1
+            tokens_per_step = 1
+            backoff_factor=0.5
+            recovery_factor_fast=0.2
+            recovery_type='fast'
+            return partial(self_correction_original_oscillation_prevention, temp=temp, tokens_per_step=tokens_per_step, backoff_factor=backoff_factor, recovery_factor_fast=recovery_factor_fast, recovery_type=recovery_type)
+        case "oscillation_prevention_slow":
+            temp = 1
+            tokens_per_step = 1
+            backoff_factor=0.5
+            recovery_factor_slow=0.4142
+            recovery_type='slow'
+            return partial(self_correction_original_oscillation_prevention, temp=temp, tokens_per_step=tokens_per_step, backoff_factor=backoff_factor, recovery_factor_slow=recovery_factor_slow, recovery_type=recovery_type)
+        case "keep_where_confident":
+            temp = 1
+            tokens_per_step = 1
+            return partial(self_correction_keep_where_confident, temp=temp, tokens_per_step=tokens_per_step)
+    pass
+
 
 def correction_step_original(model, tokenizer, diffusion_mask, z_t, t, temp, tokens_per_step):
     logits = model(z_t, t)

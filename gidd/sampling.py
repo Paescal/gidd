@@ -7,7 +7,7 @@ import tqdm.auto as tqdm
 
 from gidd.diffusion_process import NoiseSchedule
 from gidd.utils import sample_categorical
-from gidd.sampling_strategies import get_sampling_strategy
+from gidd.sampling_strategies import get_sampling_strategy, get_sampling_strategy_class
 from gidd.self_correction_strategies import self_correction_original, self_correction_original_oscillation_prevention, self_correction_keep_where_confident
 
 class Sampler(nn.Module):
@@ -36,7 +36,7 @@ class Sampler(nn.Module):
             return z_t
     
     @abstractmethod
-    def _do_generate_from_given(self, initial_z_t, diffusion_mask, num_denoising_steps, max_length, show_progress, device, keep_history=False):
+    def _do_generate_from_given(self, initial_z_t, diffusion_mask, num_denoising_steps, num_self_correction_steps, max_length, show_progress, device, keep_history=False):
         raise NotImplementedError
     
     @abstractmethod
@@ -45,16 +45,16 @@ class Sampler(nn.Module):
     
     # Generate starting from a given z_t, the diffusion_mask is a tensor with the same shape as z_t of 0s and 1s, where 1 indicates that the token is NOT given and needs to be denoised
     @torch.no_grad()
-    def generate_from_given(self, z_t, diffusion_mask, puzzle_conditioning=None, num_denoising_steps=128, max_length=None, decode=True, show_progress=True, keep_history=False):
+    def generate_from_given(self, z_t, diffusion_mask, puzzle_conditioning=None, num_denoising_steps=128, num_self_correction_steps=0, max_length=None, decode=True, show_progress=True, keep_history=False):
         max_length = max_length or self.model.config.model.max_seq_len
         # print("getting device")
         device = next(self.model.parameters()).device
 
         # print("calling _do_generate_from_given")
         if puzzle_conditioning is None:
-            z_t, history = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, puzzle_conditioning=z_t.clone(), num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device, keep_history=keep_history)
+            z_t, history = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, puzzle_conditioning=z_t.clone(), num_denoising_steps=num_denoising_steps, num_self_correction_steps=num_self_correction_steps, max_length=max_length, show_progress=show_progress, device=device, keep_history=keep_history)
         else:
-            z_t, history = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, puzzle_conditioning=puzzle_conditioning, num_denoising_steps=num_denoising_steps, max_length=max_length, show_progress=show_progress, device=device, keep_history=keep_history)
+            z_t, history = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, puzzle_conditioning=puzzle_conditioning, num_denoising_steps=num_denoising_steps, num_self_correction_steps=num_self_correction_steps, max_length=max_length, show_progress=show_progress, device=device, keep_history=keep_history)
         # print("done calling _do_generate_from_given")
 
         if decode:
@@ -141,7 +141,7 @@ class GiddSampler(Sampler):
             z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)]).clone()
         return z_t
     
-    def _do_generate_from_given(self, initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, max_length, show_progress, device, keep_history=False):
+    def _do_generate_from_given(self, initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, show_progress, device, keep_history=False):
         ts = torch.linspace(0, 1, num_denoising_steps + 1, device=device).unsqueeze(-1)
         ts = (1 - 2 * self.t_eps) * ts + self.t_eps
         
@@ -190,25 +190,25 @@ class GiddSampler(Sampler):
         elif self_correction == "original":
             temp = 1
             tokens_per_step = 1
-            z_t, history_self_correction = self_correction_original(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, keep_history=keep_history)
+            z_t, history_self_correction = self_correction_original(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, max_num_denoising_steps=num_self_correction_steps, keep_history=keep_history)
         elif self_correction == "oscillation_prevention_fast":
             temp = 1
             tokens_per_step = 1
             backoff_factor=0.5
             recovery_factor_fast=0.2
             recovery_type='fast'
-            z_t, history_self_correction = self_correction_original_oscillation_prevention(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, backoff_factor=backoff_factor, recovery_factor_fast=recovery_factor_fast, recovery_type=recovery_type, keep_history=keep_history)
+            z_t, history_self_correction = self_correction_original_oscillation_prevention(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, max_num_denoising_steps=num_self_correction_steps, backoff_factor=backoff_factor, recovery_factor_fast=recovery_factor_fast, recovery_type=recovery_type, keep_history=keep_history)
         elif self_correction == "oscillation_prevention_slow":
             temp = 1
             tokens_per_step = 1
             backoff_factor=0.5
             recovery_factor_slow=0.4142
             recovery_type='slow'
-            z_t, history_self_correction = self_correction_original_oscillation_prevention(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, backoff_factor=backoff_factor, recovery_factor_slow=recovery_factor_slow, recovery_type=recovery_type, keep_history=keep_history)
+            z_t, history_self_correction = self_correction_original_oscillation_prevention(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, max_num_denoising_steps=num_self_correction_steps, backoff_factor=backoff_factor, recovery_factor_slow=recovery_factor_slow, recovery_type=recovery_type, keep_history=keep_history)
         elif self_correction == "keep_where_confident":
             temp = 1
             tokens_per_step = 1
-            z_t, history_self_correction = self_correction_keep_where_confident(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, keep_history=keep_history)
+            z_t, history_self_correction = self_correction_keep_where_confident(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, max_num_denoising_steps=num_self_correction_steps, keep_history=keep_history)
         # elif self_correction == "max":
         #     temp = 1
         #     tokens_per_step = 1
@@ -303,6 +303,39 @@ class GiddSampler(Sampler):
         else:
             return z_t, None
 
+class GiddSampler_new(Sampler):
+    def __init__(self, config, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
+        super().__init__(model, tokenizer, noise_schedule, t_eps=t_eps)
+        self.sampling_strategy = get_sampling_strategy_class(config, model, noise_schedule, tokenizer, self.t_eps, min_p)
+        if compile_step:
+            self.sampling_step = torch.compile(self.sampling_step)
+
+    def _do_generate(self, num_samples, num_denoising_steps, max_length, show_progress=False, device=None):
+
+        # ts = torch.linspace(0, 1, num_denoising_steps + 1, device=device).unsqueeze(-1)
+        # ts = (1 - 2 * self.t_eps) * ts + self.t_eps
+
+        # # zt = sample_categorical(p_zt)
+        # z_t = self.noise_schedule.sample_prior((num_samples, max_length)).to(device, non_blocking=True)
+        # for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
+        #     z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)]).clone()
+        # return z_t
+        raise NotImplementedError
+    
+    def _do_generate_from_given(self, initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, show_progress, device, keep_history=False):
+        self.sampling_strategy.initialize(initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device)
+        history = [initial_z_t.clone().to(device, non_blocking=True)] if keep_history else None
+        for i in tqdm.trange(num_denoising_steps + num_self_correction_steps, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
+            if self.sampling_strategy.stopping_criterion(i):
+                break
+            self.sampling_strategy.step(i)
+            if keep_history:
+                history.append(self.sampling_strategy.z_t.clone())
+        if keep_history:
+            return self.sampling_strategy.z_t, torch.stack(history, dim=0).permute(1, 0, 2)
+        else:
+            return self.sampling_strategy.z_t
+        
 
 class MDLMSampler(Sampler):
     class DenoisingStep(nn.Module):
@@ -355,7 +388,7 @@ class MDLMSampler(Sampler):
 
         return z_t
     
-    def _do_generate_from_given(self, initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, max_length, show_progress, device, keep_history=False):
+    def _do_generate_from_given(self, initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, show_progress, device, keep_history=False):
         ts = torch.linspace(self.t_eps, 1 - self.t_eps, num_denoising_steps + 1, device=device).unsqueeze(-1)
 
         initial_z_t = initial_z_t.to(device, non_blocking=True)
@@ -409,7 +442,8 @@ def get_sampler(ckpt_config, model, tokenizer, noise_schedule: NoiseSchedule, sa
         sampling_config = ckpt_config
     if ckpt_config.model.type == "diffusion":
         if ckpt_config.model.diffusion_process == "gidd":
-            return GiddSampler(sampling_config, model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
+            # return GiddSampler(sampling_config, model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
+            return GiddSampler_new(sampling_config, model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
         elif ckpt_config.model.diffusion_process == "mdlm":
             return MDLMSampler(sampling_config, model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
         else:

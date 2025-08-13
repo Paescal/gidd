@@ -1,4 +1,6 @@
+from abc import abstractmethod
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
 
@@ -18,7 +20,7 @@ from gidd.utils import (
     sample_token_MDM_categorical,
     sample_categorical,
 )
-
+from gidd.self_correction_strategies import get_self_correction
 
 def get_score_mask_position(config, tokenizer):
     match config.sampling.score_mask_position:
@@ -405,18 +407,239 @@ def gidd_prob_to_recover_data(probs, z_t, t, s, i, diffusion_mask, tokenizer, no
     beta_pi_ts = beta_pi_t - alpha_t / alpha_s * beta_pi_s
 
     vocab_size_architecturally = len(tokenizer)
+    vocab_size_semantically = tokenizer.mask_token_id
     vz_t = F.one_hot(z_t, num_classes=vocab_size_architecturally)
     beta_pi_ts_at_zt = beta_pi_ts.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
     beta_pi_s_at_zt = beta_pi_s.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
     beta_pi_t_at_zt = beta_pi_t.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
 
+    # z_t fixed
     p_zs_x_cond_zt_nx = (alpha_s + beta_pi_s_at_zt) * (beta_pi_ts_at_zt / beta_pi_t_at_zt)
-
     p_zs_x_cond_zt_x = (alpha_ts * x_theta_at_zt + beta_pi_ts_at_zt) * (alpha_s + beta_pi_s_at_zt) / (alpha_t + beta_pi_t_at_zt)
-
     x_theta_at_zt = probs.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
     p_zt_x = x_theta_at_zt # either from model (x_theta_at_zt) or from recurrence (p_zs_x of previous step)
     p_zt_nx = 1 - p_zt_x
     p_zs_x = p_zt_x * p_zs_x_cond_zt_x + p_zt_nx * p_zs_x_cond_zt_nx
 
+    # z_t based on forward distribution
+    p_zs_x_and_zt_x = (alpha_s + beta_pi_s[0]) * (alpha_ts + beta_pi_ts[0])
+    p_zs_x_and_zt_nx = (alpha_s + beta_pi_s[0]) * (beta_pi_ts[tokenizer.mask_token_id] + (vocab_size_semantically - 2) * beta_pi_ts[0])
+    p_zs_x = p_zs_x_and_zt_x + p_zs_x_and_zt_nx
+
+    # decide whether to update based on p(z_t != x && z_s = x)
+    update_positions = torch.rand_like(p_zs_x_and_zt_nx) < p_zs_x_and_zt_nx
+
+    # update selected positions
+    next_z_t = sample_token_change_max(probs, z_t)
+
+    # use p_zs_x as stopping criterion
+    
     pass
+
+
+
+def get_sampling_strategy_class(config, model, noise_schedule, tokenizer, t_eps, min_p):
+    match config.sampling.strategy:
+        case "gidd_prob_to_recover_data":
+            return Gidd_prob_to_recover_data(model, noise_schedule, tokenizer, t_eps)
+        case "gidd_flattened":
+            return Gidd_flattened(model, noise_schedule, tokenizer, t_eps, get_sampling_strategy(config, tokenizer, noise_schedule, min_p), get_self_correction(config))
+        case _:
+            return Gidd_independent_steps(model, noise_schedule, tokenizer, t_eps, get_sampling_strategy(config, tokenizer, noise_schedule, min_p), get_self_correction(config))
+
+class SamplingStrategy(nn.Module):
+    def __init__(self, model, noise_schedule, tokenizer, t_eps):
+        super().__init__()
+        self.model = model
+        self.noise_schedule = noise_schedule
+        self.tokenizer = tokenizer
+        self.t_eps = t_eps
+
+    def initialize(self, initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device):
+        self.initial_z_t = initial_z_t.to(device, non_blocking=True)
+        self.diffusion_mask = diffusion_mask.to(device, non_blocking=True)
+        self.puzzle_conditioning = puzzle_conditioning
+        self.num_denoising_steps = num_denoising_steps
+        self.num_self_correction_steps = num_self_correction_steps
+        self.max_length = max_length
+        self.device = device
+
+    @abstractmethod
+    def stopping_criterion(self):
+        raise NotImplementedError
+    
+    @abstractmethod
+    def step(self):
+        raise NotImplementedError
+
+
+class Gidd_independent_steps(SamplingStrategy):
+    def __init__(self, model, noise_schedule, tokenizer, t_eps, sampling_strategy, self_correction=None):
+        super().__init__(model, noise_schedule, tokenizer, t_eps)
+        self.sampling_strategy = sampling_strategy
+        self.self_correction = self_correction
+
+    def initialize(self, initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device):
+        super().initialize(initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device)
+        self.ts = torch.linspace(0, 1, self.num_denoising_steps + 1, device=device).unsqueeze(-1)
+        self.ts = (1 - 2 * self.t_eps) * self.ts + self.t_eps
+        self.z_t = self.initial_z_t.clone()
+        self.is_fully_unmasked = torch.zeros(self.initial_z_t.shape[0], dtype=torch.bool, device=device)
+        self.has_self_corrected = False
+    
+    def stopping_criterion(self, i):
+        if i < self.num_denoising_steps:
+            return self.is_fully_unmasked.all() and self.self_correction is None
+        else:
+            return self.self_correction is None or self.has_self_corrected
+        
+    def step(self, i):
+        if i < self.num_denoising_steps:
+            self.is_fully_unmasked = (self.z_t[:, -self.max_length:] != self.tokenizer.mask_token_id).all(dim=1)
+            if self.is_fully_unmasked.all():
+                return
+            t = self.ts[self.num_denoising_steps - 1 - i]
+            s = self.ts[max(0, self.num_denoising_steps - 2 - i)]
+            logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
+            logits[..., self.tokenizer.mask_token_id:] = -1e6
+            probs = logits.softmax(-1)
+
+            update_positions, next_z_t = self.sampling_strategy(probs, self.z_t, t, s, self.num_denoising_steps - 1 - i, self.diffusion_mask)
+
+            update_positions = update_positions * self.diffusion_mask
+            update_positions = update_positions & ~self.is_fully_unmasked.unsqueeze(-1)
+            self.z_t = torch.where(update_positions.bool(), next_z_t, self.z_t)
+        elif self.self_correction is not None and not self.has_self_corrected:
+            # TODO: change self-correction code to update one step at a time, such that history can be collected easily
+            self.z_t, _ = self.self_correction(self.model, self.tokenizer, self.diffusion_mask, self.z_t, self.ts[0].item(), max_num_denoising_steps=self.num_self_correction_steps)
+            self.has_self_corrected = True
+
+class Gidd_flattened(SamplingStrategy):
+    def __init__(self, model, noise_schedule, tokenizer, t_eps, sampling_strategy, self_correction=None):
+        super().__init__(model, noise_schedule, tokenizer, t_eps)
+        self.sampling_strategy = sampling_strategy
+        self.self_correction = self_correction
+
+    def initialize(self, initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device):
+        super().initialize(initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device)
+        self.ts = torch.linspace(0, 1, self.num_denoising_steps + 1, device=device).unsqueeze(-1)
+        self.ts = (1 - 2 * self.t_eps) * self.ts + self.t_eps
+        self.z_t = self.initial_z_t.clone()
+        self.max_score = torch.zeros_like(self.z_t, dtype=torch.float, device=device)
+        self.is_fully_unmasked = torch.zeros(self.initial_z_t.shape[0], dtype=torch.bool, device=device)
+        self.has_self_corrected = False
+    
+    def stopping_criterion(self, i):
+        if i < self.num_denoising_steps:
+            return self.is_fully_unmasked.all() and self.self_correction is None
+        else:
+            return self.self_correction is None or self.has_self_corrected
+        
+    def step(self, i):
+        if i < self.num_denoising_steps:
+            self.is_fully_unmasked = (self.z_t[:, -self.max_length:] != self.tokenizer.mask_token_id).all(dim=1)
+            if self.is_fully_unmasked.all():
+                return
+            t = self.ts[self.num_denoising_steps - 1 - i]
+            s = self.ts[max(0, self.num_denoising_steps - 2 - i)]
+            logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
+            logits[..., self.tokenizer.mask_token_id:] = -1e6
+            probs = logits.softmax(-1)
+
+            update_positions, next_z_t, self.max_score = self.sampling_strategy(probs, self.z_t, t, s, self.num_denoising_steps - 1 - i, self.num_denoising_steps, self.diffusion_mask, self.max_score)
+
+            update_positions = update_positions * self.diffusion_mask
+            update_positions = update_positions & ~self.is_fully_unmasked.unsqueeze(-1)
+            self.z_t = torch.where(update_positions.bool(), next_z_t, self.z_t)
+        elif self.self_correction is not None and not self.has_self_corrected:
+            # TODO: change self-correction code to update one step at a time, such that history can be collected easily
+            self.z_t, _ = self.self_correction(self.model, self.tokenizer, self.diffusion_mask, self.z_t, self.ts[0].item(), max_num_denoising_steps=self.num_self_correction_steps)
+            self.has_self_corrected = True
+
+class Gidd_prob_to_recover_data(SamplingStrategy):
+    def __init__(self, model, noise_schedule, tokenizer, t_eps):
+        super().__init__(model, noise_schedule, tokenizer, t_eps)
+
+    def initialize(self, initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device):
+        super().initialize(initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps + num_self_correction_steps, 0, max_length, device)
+        # super().initialize(initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device)
+        self.ts = torch.linspace(0, 1, self.num_denoising_steps + 1, device=device).unsqueeze(-1)
+        self.ts = (1 - 2 * self.t_eps) * self.ts + self.t_eps
+        self.z_t = self.initial_z_t.clone()
+        self.p_zt_x = torch.zeros_like(self.initial_z_t, dtype=torch.float, device=device)
+        self.is_fully_denoised = torch.zeros(self.initial_z_t.shape[0], dtype=torch.bool, device=device)
+        self.not_mask_token_id_tensor = torch.zeros((1, 1), dtype=initial_z_t.dtype, device=device)
+        self.mask_token_id_tensor = torch.ones((1, 1), dtype=initial_z_t.dtype, device=device) * self.tokenizer.mask_token_id
+
+    def stopping_criterion(self, i):
+        return self.is_fully_denoised.all() or i >= self.num_denoising_steps
+    
+    def step(self, i):
+        t = self.ts[self.num_denoising_steps - 1 - i]
+        s = self.ts[max(0, self.num_denoising_steps - 2 - i)]
+        logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
+        logits[..., self.tokenizer.mask_token_id:] = -1e6
+        probs = logits.softmax(-1)
+        # denoising event: p(z_s = x, z_t != x)
+        # p(z_s = x) = p(z_t = x) * p(z_s = x | z_t = x) + p(z_t != x) * p(z_s = x | z_t != x)
+
+        # p(z_s = x, z_t != x) = q_t|s(z_t != x | z_s = x) * q_s(z_s = x | x) / q_t(z_t != x | x)
+        # = (alpha_s + beta_pi_s_at_zt) * beta_pi_ts_at_zt / beta_pi_t_at_zt # independent of prediction for x
+
+        # p(z_s = x | z_t = x) = q_t|s(z_t = x | z_s = x) * q_s(z_s = x | x) / q_t(z_t = x | x)
+        # = (alpha_ts * z_s + beta_pi_ts) * (alpha_s + beta_pi_s) / (alpha_t + beta_pi_t)
+        # use x_theta = probs for z_s and take the element at z_t:
+        # (alpha_ts * x_theta_at_zt + beta_pi_ts_at_zt) * (alpha_s + beta_pi_s_at_zt) / (alpha_t + beta_pi_t_at_zt)
+
+        alpha_t, beta_pi_t = self.noise_schedule.get_alpha_betapi(t)
+        alpha_s, beta_pi_s = self.noise_schedule.get_alpha_betapi(s)
+
+        alpha_ts = alpha_t / alpha_s
+        beta_pi_ts = beta_pi_t - alpha_t / alpha_s * beta_pi_s
+
+        vocab_size_architecturally = len(self.tokenizer)
+        vocab_size_semantically = self.tokenizer.mask_token_id
+        vz_t = F.one_hot(self.z_t, num_classes=vocab_size_architecturally)
+        beta_pi_s_at_zt = beta_pi_s.unsqueeze(1).expand_as(vz_t).gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
+        beta_pi_t_at_zt = beta_pi_t.unsqueeze(1).expand_as(vz_t).gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
+        beta_pi_ts_at_zt = beta_pi_ts.unsqueeze(1).expand_as(vz_t).gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
+        beta_pi_s_at_not_m = beta_pi_s.gather(-1, self.not_mask_token_id_tensor)
+        beta_pi_t_at_not_m = beta_pi_t.gather(-1, self.not_mask_token_id_tensor)
+        beta_pi_ts_at_not_m = beta_pi_ts.gather(-1, self.not_mask_token_id_tensor)
+        beta_pi_s_at_m = beta_pi_s.gather(-1, self.mask_token_id_tensor)
+        beta_pi_t_at_m = beta_pi_t.gather(-1, self.mask_token_id_tensor)
+        beta_pi_ts_at_m = beta_pi_ts.gather(-1, self.mask_token_id_tensor)
+
+        # z_t fixed
+        # # p_x_x_prime = probs # either from model, x_theta_at_zt = p_x_x_prime.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
+        # # p_x_x_prime = ... # or from recurrence
+        x_theta_at_zt = probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
+        p_zs_x_and_zt_x = x_theta_at_zt * (alpha_s + beta_pi_s_at_not_m) * (alpha_ts + beta_pi_ts_at_not_m) / (alpha_t + beta_pi_t_at_not_m)
+        p_zs_x_and_zt_nx = (1 - x_theta_at_zt) * (alpha_s + beta_pi_s_at_not_m) * beta_pi_ts_at_zt / beta_pi_t_at_zt
+        p_zs_x = p_zs_x_and_zt_x + p_zs_x_and_zt_nx
+
+        # z_t based on forward distribution # issue: p_zs_x_and_zt_nx is small, not enough time for all positions to unmask (even with more steps, tried 300)
+        # p_zs_x_and_zt_x = (alpha_s + beta_pi_s_at_not_m) * (alpha_ts + beta_pi_ts_at_not_m)
+        # p_zs_x_and_zt_nx = (alpha_s + beta_pi_s_at_not_m) * (beta_pi_ts_at_m + (vocab_size_semantically - 2) * beta_pi_ts_at_not_m).expand_as(self.z_t)
+        # p_zs_x = p_zs_x_and_zt_x + p_zs_x_and_zt_nx
+
+        # decide whether to update based on p(z_s = x && z_t != x)
+        update_positions = torch.rand_like(p_zs_x_and_zt_nx) < p_zs_x_and_zt_nx # select positions independently
+        # update_positions = sample_position_top_k_gumbel(p_zs_x_and_zt_nx * self.diffusion_mask, 1, 0) # select positions with top-k probabilities to have a denoising event
+
+        # update selected positions
+        next_z_t = sample_token_change_max(probs, self.z_t) # force change
+        # next_z_t = sample_token_MDM_max(probs) # don't force change
+
+        # use p_zs_x as stopping criterion
+        self.p_zt_x = p_zs_x
+        denoised = self.p_zt_x > 0.9
+        denoised = denoised | ~self.diffusion_mask.bool()
+        self.is_fully_denoised = denoised.all(dim=1)
+        update_positions = update_positions * self.diffusion_mask
+        update_positions = update_positions & ~self.is_fully_denoised.unsqueeze(-1)
+        self.z_t = torch.where(update_positions.bool(), next_z_t, self.z_t)
+        # print(f"{i}, z_t: {torch.where(self.diffusion_mask.bool(), self.z_t, -1)[0, 81:90]}")
+        # print(f"{i}, next_z_t: {torch.where(self.diffusion_mask.bool(), next_z_t, -1)[0, 81:90]}")
+        # print(f"{i}, update_positions: {update_positions[0, 81:]}")
+        # print(f"{i}, p_zt_x: {torch.where(self.diffusion_mask.bool(), self.p_zt_x, 0)[0, 81:]}")

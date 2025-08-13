@@ -55,10 +55,10 @@ def main(args, sampling_config):
                 solutions_tokenized = batch['input_ids']
                 if ckpt_config.training.use_diffusion_mask:
                     if i == 0:
-                        samples, history_of_first_batch = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, num_denoising_steps=args.num_denoising_steps, decode=False, show_progress=False, keep_history=True)
+                        samples, history_of_first_batch = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, keep_history=True)
                         history_solution = solutions_tokenized
                     else:
-                        samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, num_denoising_steps=args.num_denoising_steps, decode=False, show_progress=False, keep_history=False)
+                        samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, keep_history=False)
                 
                 if ckpt_config.model.puzzle_conditioning == 'in_context':
                         samples = samples[..., -ckpt_config.model.max_seq_len:]
@@ -75,7 +75,9 @@ def main(args, sampling_config):
     print(f"accuracy={accuracy:.4f}")
     print(f"correctly_filled_cells={correctly_filled_cells:.4f}")
     print(f"not_fully_unmasked={not_fully_unmasked:.4f}")
-    chosen_sample_for_history = 4
+    # chosen_sample_for_history = 4 # debugging for checkpoints/gidd_0_2/100_epochs,gidd_keep_where_confident,"score_position_for_change=change_max select_position=top_k_gumbel change_token=change_max k=1 gumbel_noise_coefficient=0 self_correction=none dataset=hard num_samples=64 num_denoising_steps=81 batch_size=64 min_p=0 compile_torch=0 seed=1"
+    # chosen_sample_for_history = 32 # debugging for gidd_independent_positions_decomposed_update_distribution vs gidd_emulate_mdlm_vanilla
+    chosen_sample_for_history = 0
     history_of_chosen_sample = history_of_first_batch.cpu()[chosen_sample_for_history]
     history_solution = history_solution.cpu()[chosen_sample_for_history]
     if ckpt_config.model.puzzle_conditioning == 'in_context':
@@ -86,12 +88,13 @@ def main(args, sampling_config):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--device', type=int, default=0, help='Device to use for evaluation')
+    parser.add_argument('--device', type=int, default=0, help='Device to use for evaluation') # Not actually used!
     parser.add_argument('--seed', type=int, default=1, help='Seed for reproducibility')
     parser.add_argument('--checkpoint', type=str, required=True, help='Checkpoint to evaluate')
     parser.add_argument('--dataset', type=str, required=True, help='Dataset to evaluate (easy, hard)')
     parser.add_argument('--num_samples', type=int, default=5000, help='Number of samples to generate')
     parser.add_argument('--num_denoising_steps', type=int, default=81, help='Number of denoising steps')
+    parser.add_argument('--num_self_correction_steps', type=int, default=81, help='Number of self-correction steps')
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
     parser.add_argument('--min_p', type=float, default=0, help='Minimum probability to be chosen in categorical sampling')
     parser.add_argument('--compile_torch', type=int, default=False, help='Whether to compile the torch model')
