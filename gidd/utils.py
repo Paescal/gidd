@@ -355,6 +355,11 @@ def score_sudoku(samples_tokenized, diffusion_mask, solutions_tokenized, tokeniz
     valid_sudoku_fraction = np.mean(np.array(set_score) == max_set_score)
 
     not_fully_unmasked = (samples_tokenized == tokenizer.mask_token_id).any(dim=1).sum() / num_samples
+    # print statements to find not fully unmasked samples and the positions therein which remained masked
+    # print(f"samples not fully unmasked: {(samples_tokenized == tokenizer.mask_token_id).any(dim=1)}")
+    # sample_not_fully_unmasked = torch.argmax((samples_tokenized == tokenizer.mask_token_id).any(dim=1).to(int))
+    # print(f"sample not fully unmasked: {sample_not_fully_unmasked}")
+    # print(f"position not unmasked: {torch.argmax((samples_tokenized[sample_not_fully_unmasked] == tokenizer.mask_token_id).to(int))}")
     
     return {
         "correctly_filled_cells": mean_filled_cells_score_fraction,
