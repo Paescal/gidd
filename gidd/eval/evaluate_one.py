@@ -111,6 +111,10 @@ if __name__ == "__main__":
     sampling_argument_group.add_argument('--k', type=int, default=None, help='K for top-k gumbel sampling')
     sampling_argument_group.add_argument('--gumbel_noise_coefficient', type=float, default=None, help='Gumbel noise coefficient for top-k gumbel sampling')
     sampling_argument_group.add_argument('--self_correction', type=str, default="none", help='Self-correction strategy to use')
+    sampling_argument_group.add_argument('--oracle', type=str, default="model", help='Oracle for p_denoise')
+    sampling_argument_group.add_argument('--position_sampling', type=str, default="independent", help='Position sampling strategy for p_denoise')
+    sampling_argument_group.add_argument('--position_metric', type=str, default="p_denoise", help='Position metric for p_denoise')
+    sampling_argument_group.add_argument('--token_sampling', type=str, default="categorical", help='Token sampling strategy for p_denoise')
 
     args = parser.parse_args()
 
@@ -126,7 +130,13 @@ if __name__ == "__main__":
             "unmask_token": args.unmask_token,
             "k": args.k,
             "gumbel_noise_coefficient": args.gumbel_noise_coefficient,
-            "self_correction": args.self_correction
+            "self_correction": args.self_correction,
+            "p_denoise": {
+                "oracle": args.oracle,
+                "position_sampling": args.position_sampling,
+                "position_metric": args.position_metric,
+                "token_sampling": args.token_sampling,
+            }
         }
     })
 

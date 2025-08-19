@@ -7,15 +7,15 @@ export VECLIB_MAXIMUM_THREADS=3
 
 num_jobs=6
 
-num_samples=64
+num_samples=6400
 batch_size=64
 min_p=0
 compile_torch=0
 
 seeds=(
     "1"
-    # "2"
-    # "3"
+    "2"
+    "3"
 )
 checkpoints=(
     # "2025-06-18/12-51-55/checkpoints/latest/ gidd 0"
@@ -37,7 +37,7 @@ datasets=(
     "hard"
 )
 nums_denoising_steps=(
-    # "81"
+    "81"
     "128"
 )
 nums_self_correction_steps=(
@@ -87,11 +87,31 @@ gumbel_noise_coefficients=(
 )
 self_correction_strategies=(
     "none"
-    "original"
+    # "original"
     # "oscillation_prevention_fast"
     # "oscillation_prevention_slow"
     # "keep_where_confident"
     # "max"
+)
+oracles=(
+    "perfect"
+    "model"
+    # "recurrence"
+    # "model_and_recurrence"
+)
+position_sampling_strategies=(
+    "independent"
+    "top_k"
+)
+position_metric_strategies=(
+    "p_denoise"
+    "confident_and_p_denoise"
+    "confident_and_noisy"
+)
+token_sampling_strategies=(
+    "categorical"
+    "change_max"
+    "max"
 )
 
 output_dir="$( dirname "${BASH_SOURCE[0]}" )/../../outputs/evaluate_all"
@@ -328,7 +348,15 @@ if [ $build_combinations_file = true ]; then
                             # gidd_prob_to_recover_data
                             if [[ " ${strategies[@]} " =~ " gidd_prob_to_recover_data " ]]; then
                                 if (( $(echo "$noise > 0" | bc -l) )); then
-                                    echo "$ckpt,gidd_prob_to_recover_data,$suffix" >> $combinations_file
+                                    for oracle in "${oracles[@]}"; do
+                                        for position_sampling in "${position_sampling_strategies[@]}"; do
+                                            for position_metric in "${position_metric_strategies[@]}"; do
+                                                for token_sampling in "${token_sampling_strategies[@]}"; do
+                                                    echo "$ckpt,gidd_prob_to_recover_data,oracle=$oracle position_sampling=$position_sampling position_metric=$position_metric token_sampling=$token_sampling $suffix" >> $combinations_file
+                                                done
+                                            done
+                                        done
+                                    done
                                 fi
                             fi
                         fi
