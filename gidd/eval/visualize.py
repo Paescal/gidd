@@ -2,6 +2,7 @@ import hydra
 import torch
 import csv
 import argparse
+import json
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import matplotlib.colors as mcolors
@@ -38,7 +39,32 @@ def history_str_to_tensor(history_str):
     solution_tensor = history_tensor[-1, :].clone()
     history_tensor = history_tensor[:-1, :]
     return history_tensor, solution_tensor
+
+def marginals_to_str(denoised_fraction, mask_fraction, uniform_fraction):
+    marginals_str = f"\"denoised_fraction={json.dumps(denoised_fraction.tolist())}\"\n"
+    marginals_str += f"\"mask_fraction={json.dumps(mask_fraction.tolist())}\"\n"
+    marginals_str += f"\"uniform_fraction={json.dumps(uniform_fraction.tolist())}\""
+    return marginals_str
+
+def marginal_str_to_tensor(marginal_str):
+    return torch.tensor(json.loads(marginal_str.split("=")[1]))
     
+def visualize_marginals(marginals, save_path):
+    num_samples = len(marginals)
+    denoised_fraction = marginals[0]['denoised_fraction']
+    mask_fraction = marginals[0]['mask_fraction']
+    uniform_fraction = marginals[0]['uniform_fraction']
+    # create line plot
+    plt.figure(figsize=(10, 6))
+    plt.plot(denoised_fraction, label="Denoised Fraction")
+    plt.plot(mask_fraction, label="Mask Fraction")
+    plt.plot(uniform_fraction, label="Uniform Fraction")
+    plt.xlabel("Time Step")
+    plt.ylabel("Fraction")
+    plt.title("Marginals Over Time")
+    plt.legend()
+    plt.savefig(save_path)
+
 def visualize_history(history, solution, mask_token_id):
     def print_grid(step, solution, mask_token_id):
         for i in range(9):
@@ -372,10 +398,11 @@ def visualize_sampling_process(csv_file, mask_token_id, rows_to_visualize, visua
     with open(csv_file, newline='') as f:
         reader = csv.DictReader(f, fieldnames=[
             'accuracy', 'correctly_filled_cells', 'not_fully_unmasked',
-            'checkpoint', 'strategy', 'params', 'history'
+            'checkpoint', 'strategy', 'params', 'denoised_fraction', 'mask_fraction', 'uniform_fraction', 'history'
         ])
         next(reader)
         histories = []
+        marginals = []
         for row in reader:
             history_str = row['history']
             history, solution = history_str_to_tensor(history_str)
@@ -386,7 +413,13 @@ def visualize_sampling_process(csv_file, mask_token_id, rows_to_visualize, visua
                 "strategy": row['strategy'],
                 "params": row['params'],
             })
+            marginals.append({
+                "denoised_fraction": marginal_str_to_tensor(row['denoised_fraction']),
+                "mask_fraction": marginal_str_to_tensor(row['mask_fraction']),
+                "uniform_fraction": marginal_str_to_tensor(row['uniform_fraction']),
+            })
         selected_histories = [histories[i] for i in rows_to_visualize]
+        selected_marginals = [marginals[i] for i in rows_to_visualize]
         if visualization_type == 'print':
             for i, history in zip(rows_to_visualize, selected_histories):
                 print(f"Sample {i}:")
@@ -397,6 +430,9 @@ def visualize_sampling_process(csv_file, mask_token_id, rows_to_visualize, visua
         elif visualization_type == 'image':
             filename = "outputs/evaluate_all/final_grid_updates_multiple.png"
             visualize_final_grid_with_update_gradient_multi(selected_histories, mask_token_id, filename)
+        elif visualization_type == 'marginals':
+            filename = "outputs/evaluate_all/marginals.png"
+            visualize_marginals(selected_marginals, filename)
 
 
 def main(args):
@@ -408,7 +444,7 @@ if __name__ == "__main__":
     parser.add_argument('--mask_token_id', type=int, default=0, help='Token ID of the mask token')
     parser.add_argument('--rows', type=int, nargs='+', default=[0],
                         help='Indices of rows to visualize from the CSV file')
-    parser.add_argument('--visualization_type', type=str, choices=['print', 'video', 'image'], default='print',
+    parser.add_argument('--visualization_type', type=str, choices=['print', 'video', 'image', 'marginals'], default='print',
                         help='Type of visualization to perform: "print" for console output, "video" for animation')
     args = parser.parse_args()
     main(args)

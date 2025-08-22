@@ -24,14 +24,14 @@ def main(args):
     with open(csv_file, newline='') as f:
         reader = csv.DictReader(f, fieldnames=[
             'accuracy', 'correctly_filled_cells', 'not_fully_unmasked',
-            'checkpoint', 'strategy', 'params', 'history'
+            'checkpoint', 'strategy', 'params', 'denoised_fraction', 'mask_fraction', 'uniform_fraction', 'history'
         ])
         reader.__next__()  # Skip header row
         for row in reader:
             params = parse_params(row['params'])
             # Remove seed from params to aggregate over seeds
             params_no_seed = {k: v for k, v in params.items() if k != 'seed'}
-            key = (row['strategy'], row['checkpoint'], tuple(sorted(params_no_seed.items())))
+            key = (row['strategy'], row['checkpoint'], tuple(sorted(params_no_seed.items()))) # TODO: sort according to custom order to make analysis easier
             results[key]['accuracy'].append(float(row['accuracy']))
             results[key]['correctly_filled_cells'].append(float(row['correctly_filled_cells']))
 

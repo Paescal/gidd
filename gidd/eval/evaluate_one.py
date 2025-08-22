@@ -12,6 +12,7 @@ from gidd.utils import parse_dtype, score_sudoku
 from gidd.checkpoints import load_checkpoint
 from gidd.data import _get_dataloader_with_seed, _get_dataloader, default_collator
 from gidd.sampling import get_sampler
+from gidd.eval.generation_info import GenerationInfoHandler
 from gidd.eval.visualize import history_to_str
 from datasets import load_from_disk
 from types import SimpleNamespace
@@ -47,6 +48,7 @@ def main(args, sampling_config):
     with tqdm.tqdm(total=args.num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
         with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
             data_loader = iter(data_loader)
+            generation_info_handler = GenerationInfoHandler(max_seq_len=ckpt_config.model.max_seq_len, info=["history", "marginals"])
             for i in range(0, args.num_samples, args.batch_size):
                 batch = next(data_loader)
                 bs = min(args.batch_size, args.num_samples - i)
@@ -55,10 +57,12 @@ def main(args, sampling_config):
                 solutions_tokenized = batch['input_ids']
                 if ckpt_config.training.use_diffusion_mask:
                     if i == 0:
-                        samples, history_of_first_batch = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, keep_history=True)
-                        history_solution = solutions_tokenized
+                        samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, generation_info_handler=generation_info_handler, keep_history=True)
+                        # samples, history_of_first_batch = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, generation_info_handler=generation_info_handler, keep_history=True)
+                        # history_solution = solutions_tokenized
                     else:
-                        samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, keep_history=False)
+                        generation_info_handler.collect_history = False
+                        samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, generation_info_handler=generation_info_handler, keep_history=False)
 
                 if ckpt_config.model.puzzle_conditioning == 'in_context':
                         samples = samples[..., -ckpt_config.model.max_seq_len:]
@@ -75,15 +79,28 @@ def main(args, sampling_config):
     print(f"accuracy={accuracy:.4f}")
     print(f"correctly_filled_cells={correctly_filled_cells:.4f}")
     print(f"not_fully_unmasked={not_fully_unmasked:.4f}")
+    
+    generation_info_handler.collect_history = True
+    generation_info_handler.print_info()
+    
     # chosen_sample_for_history = 4 # debugging for checkpoints/gidd_0_2/100_epochs,gidd_keep_where_confident,"score_position_for_change=change_max select_position=top_k_gumbel change_token=change_max k=1 gumbel_noise_coefficient=0 self_correction=none dataset=hard num_samples=64 num_denoising_steps=81 batch_size=64 min_p=0 compile_torch=0 seed=1"
     # chosen_sample_for_history = 32 # debugging for gidd_independent_positions_decomposed_update_distribution vs gidd_emulate_mdlm_vanilla
-    chosen_sample_for_history = 19
-    history_of_chosen_sample = history_of_first_batch.cpu()[chosen_sample_for_history]
-    history_solution = history_solution.cpu()[chosen_sample_for_history]
-    if ckpt_config.model.puzzle_conditioning == 'in_context':
-        history_of_chosen_sample = history_of_chosen_sample[:, -ckpt_config.model.max_seq_len:]
-        history_solution = history_solution[-ckpt_config.model.max_seq_len:]
-    print(history_to_str(history_of_chosen_sample, history_solution))
+    # chosen_sample_for_history = 19
+    # history = generation_info_handler.get_history().cpu()
+    # history_of_chosen_sample = history[chosen_sample_for_history]
+    # if ckpt_config.model.puzzle_conditioning == 'in_context':
+    #     history_of_chosen_sample = history_of_chosen_sample[:, -ckpt_config.model.max_seq_len:]
+    # print(history_to_str(history_of_chosen_sample[:-1], history_of_chosen_sample[-1]))
+
+    # marginals = generation_info_handler.get_marginals()
+    # print(marginals)
+
+    # history_of_chosen_sample = history_of_first_batch.cpu()[chosen_sample_for_history]
+    # history_solution = history_solution.cpu()[chosen_sample_for_history]
+    # if ckpt_config.model.puzzle_conditioning == 'in_context':
+    #     history_of_chosen_sample = history_of_chosen_sample[:, -ckpt_config.model.max_seq_len:]
+    #     history_solution = history_solution[-ckpt_config.model.max_seq_len:]
+    # print(history_to_str(history_of_chosen_sample, history_solution))
 
 
 if __name__ == "__main__":
