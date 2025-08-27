@@ -584,20 +584,12 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
         logits[..., self.tokenizer.mask_token_id:] = -1e6
         probs = logits.softmax(-1)
         if i == self.num_denoising_steps + self.num_self_correction_steps - 1:
-            update_positions = (self.z_t == self.tokenizer.mask_token_id)
+            update_positions = (self.z_t == self.tokenizer.mask_token_id) * self.diffusion_mask
             next_z_t = probs.argmax(-1)
+            p_zt_x = probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
+            uniform_noise_positions = torch.zeros_like(p_zt_x, dtype=torch.bool)
+            next_z_t_noise = next_z_t
         else:
-            # denoising event: p(z_s = x, z_t != x)
-            # p(z_s = x) = p(z_t = x) * p(z_s = x | z_t = x) + p(z_t != x) * p(z_s = x | z_t != x)
-
-            # p(z_s = x, z_t != x) = q_t|s(z_t != x | z_s = x) * q_s(z_s = x | x) / q_t(z_t != x | x)
-            # = (alpha_s + beta_pi_s_at_zt) * beta_pi_ts_at_zt / beta_pi_t_at_zt # independent of prediction for x
-
-            # p(z_s = x | z_t = x) = q_t|s(z_t = x | z_s = x) * q_s(z_s = x | x) / q_t(z_t = x | x)
-            # = (alpha_ts * z_s + beta_pi_ts) * (alpha_s + beta_pi_s) / (alpha_t + beta_pi_t)
-            # use x_theta = probs for z_s and take the element at z_t:
-            # (alpha_ts * x_theta_at_zt + beta_pi_ts_at_zt) * (alpha_s + beta_pi_s_at_zt) / (alpha_t + beta_pi_t_at_zt)
-
             alpha_t, beta_pi_t = self.noise_schedule.get_alpha_betapi(t)
             alpha_s, beta_pi_s = self.noise_schedule.get_alpha_betapi(s)
 
@@ -616,6 +608,9 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
             beta_pi_s_at_m = beta_pi_s.gather(-1, self.mask_token_id_tensor)
             beta_pi_t_at_m = beta_pi_t.gather(-1, self.mask_token_id_tensor)
             beta_pi_ts_at_m = beta_pi_ts.gather(-1, self.mask_token_id_tensor)
+            
+            # denoising event: p(z_s = x, z_t != x)
+            # p(z_s = x) = p(z_t = x) * p(z_s = x | z_t = x) + p(z_t != x) * p(z_s = x | z_t != x)
 
             # z_t fixed
             if self.config.oracle == "perfect":
@@ -638,8 +633,11 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
 
             p_zs_x_and_zt_x = p_zt_x * (alpha_s + beta_pi_s_at_not_m) * (alpha_ts + beta_pi_ts_at_not_m) / (alpha_t + beta_pi_t_at_not_m)
             p_zs_x_and_zt_nx = (1 - p_zt_x) * (alpha_s + beta_pi_s_at_not_m) * beta_pi_ts_at_zt / beta_pi_t_at_zt
+
+            # p_zs_nx_and_zt_nx = (1 - p_zt_x) * (1 - (alpha_s + beta_pi_s_at_not_m) * beta_pi_ts_at_zt / beta_pi_t_at_zt)
+            p_zs_u_and_zt_m = (vocab_size_semantically - 2) * beta_pi_s_at_not_m * beta_pi_ts_at_m / beta_pi_t_at_m
             
-            # use p_zs_x as stopping criterion
+            # use p_zt_x as stopping criterion
             denoised = p_zt_x > 0.9
             denoised = denoised | ~self.diffusion_mask.bool()
             self.is_fully_denoised = denoised.all(dim=1)
@@ -650,18 +648,22 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
             # p_zs_x = p_zs_x_and_zt_x + p_zs_x_and_zt_nx
 
             # decide whether to update based on p(z_s = x && z_t != x)
+            uniform_noise_positions = torch.zeros_like(p_zt_x, dtype=torch.bool)
             if self.config.position_sampling == "independent":
+                dice_roll = torch.rand_like(p_zt_x)
                 if self.config.position_metric == "p_denoise":
-                    update_positions = torch.rand_like(p_zs_x_and_zt_nx) < p_zs_x_and_zt_nx
+                    update_positions = dice_roll < p_zs_x_and_zt_nx
+                    # uniform_noise_positions = (dice_roll >= p_zs_x_and_zt_nx) & (dice_roll < p_zs_x_and_zt_nx + p_zs_u_and_zt_m)
+                    uniform_noise_positions = (dice_roll >= p_zs_x_and_zt_nx) & (dice_roll < p_zs_x_and_zt_nx + p_zs_u_and_zt_m) & (self.z_t == self.tokenizer.mask_token_id)
                 elif self.config.position_metric == "confident_and_p_denoise":
                     confident_and_p_denoise = probs.max(-1).values * p_zs_x_and_zt_nx
-                    update_positions = torch.rand_like(confident_and_p_denoise) < confident_and_p_denoise
+                    update_positions = dice_roll < confident_and_p_denoise
                 elif self.config.position_metric == "confident_and_noisy": # might not make sense but for the sake of running the cross product of configuration options keep this
                     confident_and_noisy = probs.max(-1).values * (1 - p_zt_x)
-                    update_positions = torch.rand_like(confident_and_noisy) < confident_and_noisy
+                    update_positions = dice_roll < confident_and_noisy
                 elif self.config.position_metric == "noisy":
                     noisy = 1 - p_zt_x
-                    update_positions = torch.rand_like(noisy) < noisy
+                    update_positions = dice_roll < noisy
             elif self.config.position_sampling == "top_k":
                 # updatable_positions = self.diffusion_mask
                 updatable_positions = self.diffusion_mask & ~denoised
@@ -674,21 +676,31 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                     # update_positions = sample_position_top_k_gumbel((probs.max(-1).values + (1 - self.p_zt_x)) * self.diffusion_mask, 1, 0)
 
             # update selected positions
-            # token_sampling = "categorical"
-            # token_sampling = "change_max"
-            # token_sampling = "max"
             if self.config.token_sampling == "categorical":
                 next_z_t = sample_categorical(probs, end_index=self.tokenizer.unk_token_id - 1) # sample categorically from predictions
             elif self.config.token_sampling == "change_max":
                 next_z_t = sample_token_change_max(probs, self.z_t) # force change
             elif self.config.token_sampling == "max":
                 next_z_t = sample_token_MDM_max(probs) # don't force change
+            
+            # update positions selected for uniform noise
+            if self.config.uniform_noise == "none":
+                next_z_t_noise = self.z_t
+            elif self.config.uniform_noise == "noise":
+                next_z_t_noise = torch.randint(0, self.tokenizer.mask_token_id, self.z_t.shape, device=self.device)
+            elif self.config.uniform_noise == "model":
+                next_z_t_noise = next_z_t
+            
 
             # TODO: decide whether to update based on p_zs_nx_and_zt_nx (transitions x' -> u and x' -> x', for x' != x (either x' = m or x' = u))
             
             update_positions = update_positions * self.diffusion_mask
+            uniform_noise_positions = uniform_noise_positions * self.diffusion_mask
             # update_positions = update_positions & ~self.is_fully_denoised.unsqueeze(-1) # only prevent updating if entire sample is currently believed to be denoised
+            # uniform_noise_positions = uniform_noise_positions & ~self.is_fully_denoised.unsqueeze(-1) # only prevent updating if entire sample is currently believed to be denoised
             update_positions = update_positions & ~denoised # don't update positions that are currently believed to be denoised
+            uniform_noise_positions = uniform_noise_positions & ~denoised # don't update positions that are currently believed to be denoised
+            # print(f"{i}: num denoised positions: {(denoised & self.diffusion_mask).sum()}")
             
             self.p_zs_x = p_zs_x_and_zt_x + p_zs_x_and_zt_nx
             if self.config.oracle == "recurrence" or self.config.oracle == "model_and_recurrence":
@@ -696,24 +708,20 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
             elif self.config.oracle == "model_EMA":
                 self.p_zs_x = torch.where(update_positions.bool(), probs.gather(-1, next_z_t.unsqueeze(-1)).squeeze(-1), p_zt_x)
             
-        self.z_t = torch.where(update_positions.bool(), next_z_t, self.z_t)
-
         if generation_info_handler is not None:
             generation_info_handler.batch_step_history(self.z_t)
-            if i != self.num_denoising_steps + self.num_self_correction_steps - 1:
-                generation_info_handler.batch_step_marginals(self.z_t, p_zt_x, self.tokenizer.mask_token_id)
-        # TODO: collect fraction of mask, noise-free and uniform tokens
-        
-        # sample_in_batch = 19
-        # position_in_sample = 81 + 56
-        # print(f"p_zt_x: {self.p_zt_x[sample_in_batch, position_in_sample]}")
-        # self.cum_p_not_denoised *= (1 - p_zs_x_and_zt_nx[sample_in_batch, position_in_sample].item())
-        # print(f"{i}, z_t: {self.z_t[sample_in_batch, position_in_sample].item()}")
-        # print(f"{i}, num masks in z_t per sample: {(self.z_t[:, -81:] == self.tokenizer.mask_token_id).sum(-1)}")
-        # print(f"{i}, max num masks in z_t per sample: {(self.z_t[:, -81:] == self.tokenizer.mask_token_id).sum(-1).max()}")
-        # print(f"{i}, dice_roll: {dice_roll[sample_in_batch, position_in_sample].item()}")
-        # if i != self.num_denoising_steps + self.num_self_correction_steps - 1:
-            # print(f"{i}, x_theta_at_zt: {x_theta_at_zt[sample_in_batch, position_in_sample].item()}")
-            # print(f"{i}, constant term x: {((alpha_s + beta_pi_s_at_not_m) * (alpha_ts + beta_pi_ts_at_not_m) / (alpha_t + beta_pi_t_at_not_m))[0, 0].item()}")
-            # print(f"{i}, p_zs_x_and_zt_nx: {p_zs_x_and_zt_nx[sample_in_batch, position_in_sample].item()}")
-        # print(f"{i}, cum_p_not_denoised: {self.cum_p_not_denoised}")
+            generation_info_handler.batch_step_marginals(self.z_t, p_zt_x, self.tokenizer.mask_token_id)
+
+        self.z_t = torch.where(update_positions.bool(), next_z_t, self.z_t)
+        self.z_t = torch.where(uniform_noise_positions.bool(), next_z_t_noise, self.z_t)
+
+        # print(f"{i}: num update positions: {update_positions.sum()}, num uniform noise positions: {uniform_noise_positions.sum()}")
+
+
+        if i == self.num_denoising_steps + self.num_self_correction_steps - 1 and generation_info_handler is not None:
+            generation_info_handler.batch_step_history(self.z_t)
+            logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
+            logits[..., self.tokenizer.mask_token_id:] = -1e6
+            probs = logits.softmax(-1)
+            p_zt_x = probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
+            generation_info_handler.batch_step_marginals(self.z_t, p_zt_x, self.tokenizer.mask_token_id)

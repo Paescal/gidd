@@ -40,8 +40,9 @@ def history_str_to_tensor(history_str):
     history_tensor = history_tensor[:-1, :]
     return history_tensor, solution_tensor
 
-def marginals_to_str(denoised_fraction, mask_fraction, uniform_fraction):
-    marginals_str = f"\"denoised_fraction={json.dumps(denoised_fraction.tolist())}\"\n"
+def marginals_to_str(true_denoised_fraction, denoised_fraction, mask_fraction, uniform_fraction):
+    marginals_str = f"\"true_denoised_fraction={json.dumps(true_denoised_fraction.tolist())}\"\n"
+    marginals_str += f"\"denoised_fraction={json.dumps(denoised_fraction.tolist())}\"\n"
     marginals_str += f"\"mask_fraction={json.dumps(mask_fraction.tolist())}\"\n"
     marginals_str += f"\"uniform_fraction={json.dumps(uniform_fraction.tolist())}\""
     return marginals_str
@@ -51,11 +52,13 @@ def marginal_str_to_tensor(marginal_str):
     
 def visualize_marginals(marginals, save_path):
     num_samples = len(marginals)
+    true_denoised_fraction = marginals[0]['true_denoised_fraction']
     denoised_fraction = marginals[0]['denoised_fraction']
     mask_fraction = marginals[0]['mask_fraction']
     uniform_fraction = marginals[0]['uniform_fraction']
     # create line plot
     plt.figure(figsize=(10, 6))
+    plt.plot(true_denoised_fraction, label="True Denoised Fraction")
     plt.plot(denoised_fraction, label="Denoised Fraction")
     plt.plot(mask_fraction, label="Mask Fraction")
     plt.plot(uniform_fraction, label="Uniform Fraction")
@@ -64,6 +67,12 @@ def visualize_marginals(marginals, save_path):
     plt.title("Marginals Over Time")
     plt.legend()
     plt.savefig(save_path)
+
+    print(f"num measurements: {len(true_denoised_fraction)}")
+    print(f"max true_denoised_fraction: {max(true_denoised_fraction)}")
+    print(f"max denoised_fraction: {max(denoised_fraction)}")
+    print(f"max mask_fraction: {max(mask_fraction)}")
+    print(f"max uniform_fraction: {max(uniform_fraction)}")
 
 def visualize_history(history, solution, mask_token_id):
     def print_grid(step, solution, mask_token_id):
@@ -154,7 +163,7 @@ def visualize_history_as_video_multi(histories, mask_token_id, output_path="outp
         t_eps = float(ckpt_config.model.t_eps)
         ckpt_ts = torch.linspace(1, 0, ckpt_config.sampling.num_denoising_steps + 1, device=device).unsqueeze(-1)
         ckpt_ts = (1 - 2 * t_eps) * ckpt_ts + t_eps
-        ckpt_ts = torch.cat([ckpt_ts, torch.full((max_steps - ckpt_ts.shape[0] + 1, 1), t_eps, device=device)], dim=0)
+        ckpt_ts = torch.cat([ckpt_ts, torch.full((max(max_steps - ckpt_ts.shape[0] + 1, 0), 1), t_eps, device=device)], dim=0)
         ts.append(ckpt_ts)
 
     fig, axes = plt.subplots(
@@ -398,7 +407,7 @@ def visualize_sampling_process(csv_file, mask_token_id, rows_to_visualize, visua
     with open(csv_file, newline='') as f:
         reader = csv.DictReader(f, fieldnames=[
             'accuracy', 'correctly_filled_cells', 'not_fully_unmasked',
-            'checkpoint', 'strategy', 'params', 'denoised_fraction', 'mask_fraction', 'uniform_fraction', 'history'
+            'checkpoint', 'strategy', 'params', 'true_denoised_fraction', 'denoised_fraction', 'mask_fraction', 'uniform_fraction', 'history'
         ])
         next(reader)
         histories = []
@@ -414,6 +423,7 @@ def visualize_sampling_process(csv_file, mask_token_id, rows_to_visualize, visua
                 "params": row['params'],
             })
             marginals.append({
+                "true_denoised_fraction": marginal_str_to_tensor(row['true_denoised_fraction']),
                 "denoised_fraction": marginal_str_to_tensor(row['denoised_fraction']),
                 "mask_fraction": marginal_str_to_tensor(row['mask_fraction']),
                 "uniform_fraction": marginal_str_to_tensor(row['uniform_fraction']),

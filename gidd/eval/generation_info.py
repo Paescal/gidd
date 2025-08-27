@@ -10,6 +10,7 @@ class GenerationInfoHandler:
             self.history = None
         if "marginals" in info:
             self.collect_marginals = True
+            self.true_denoised_fraction = None
             self.denoised_fraction = None
             self.mask_fraction = None
             self.uniform_fraction = None
@@ -22,6 +23,7 @@ class GenerationInfoHandler:
         if self.collect_history:
             self.batch_history = [initial_z_t.clone().to(device=device, non_blocking=True)]
         if self.collect_marginals:
+            self.batch_true_denoised_fraction = [0.]
             self.batch_denoised_fraction = [0.]
             self.batch_mask_fraction = [self.batch_size]
             self.batch_uniform_fraction = [0.]
@@ -32,8 +34,10 @@ class GenerationInfoHandler:
 
     def batch_step_marginals(self, z_t, p_zt_x, mask_token_id):
         if self.collect_marginals:
+            current_true_denoised_fraction = (((z_t == self.batch_solution) * self.diffusion_mask).sum() / self.num_diffusion_positions).item()
             current_denoised_fraction = ((p_zt_x * self.diffusion_mask).sum() / self.num_diffusion_positions).item()
             current_mask_fraction = (((z_t == mask_token_id) * self.diffusion_mask).sum() / self.num_diffusion_positions).item()
+            self.batch_true_denoised_fraction.append(current_true_denoised_fraction * self.batch_size)
             self.batch_denoised_fraction.append(current_denoised_fraction * self.batch_size)
             self.batch_mask_fraction.append(current_mask_fraction * self.batch_size)
             self.batch_uniform_fraction.append((1 - current_denoised_fraction - current_mask_fraction) * self.batch_size)
@@ -50,16 +54,19 @@ class GenerationInfoHandler:
                     raise ValueError("Inconsistent history shapes")
                 self.history = torch.cat([self.history, self.batch_history], dim=0)
         if self.collect_marginals:
+            self.batch_true_denoised_fraction = torch.tensor(self.batch_true_denoised_fraction)
             self.batch_denoised_fraction = torch.tensor(self.batch_denoised_fraction)
             self.batch_mask_fraction = torch.tensor(self.batch_mask_fraction)
             self.batch_uniform_fraction = torch.tensor(self.batch_uniform_fraction)
-            if self.denoised_fraction is None:
+            if self.true_denoised_fraction is None:
+                self.true_denoised_fraction = self.batch_true_denoised_fraction
                 self.denoised_fraction = self.batch_denoised_fraction
                 self.mask_fraction = self.batch_mask_fraction
                 self.uniform_fraction = self.batch_uniform_fraction
             else:
-                if self.denoised_fraction.shape != self.batch_denoised_fraction.shape:
+                if self.true_denoised_fraction.shape != self.batch_true_denoised_fraction.shape:
                     raise ValueError("Inconsistent marginals shapes")
+                self.true_denoised_fraction = self.true_denoised_fraction + self.batch_true_denoised_fraction
                 self.denoised_fraction = self.denoised_fraction + self.batch_denoised_fraction
                 self.mask_fraction = self.mask_fraction + self.batch_mask_fraction
                 self.uniform_fraction = self.uniform_fraction + self.batch_uniform_fraction
@@ -73,6 +80,7 @@ class GenerationInfoHandler:
     def get_marginals(self):
         if self.collect_marginals:
             return {
+                "true_denoised_fraction": self.true_denoised_fraction / self.num_samples,
                 "denoised_fraction": self.denoised_fraction / self.num_samples,
                 "mask_fraction": self.mask_fraction / self.num_samples,
                 "uniform_fraction": self.uniform_fraction / self.num_samples
@@ -88,4 +96,4 @@ class GenerationInfoHandler:
             print(history_to_str(history_of_chosen_sample[:-1], history_of_chosen_sample[-1]))
         if self.collect_marginals:
             marginals = self.get_marginals()
-            print(marginals_to_str(marginals["denoised_fraction"].cpu(), marginals["mask_fraction"].cpu(), marginals["uniform_fraction"].cpu()))
+            print(marginals_to_str(marginals["true_denoised_fraction"].cpu(), marginals["denoised_fraction"].cpu(), marginals["mask_fraction"].cpu(), marginals["uniform_fraction"].cpu()))

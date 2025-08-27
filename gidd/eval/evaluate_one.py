@@ -132,6 +132,7 @@ if __name__ == "__main__":
     sampling_argument_group.add_argument('--position_sampling', type=str, default="independent", help='Position sampling strategy for p_denoise')
     sampling_argument_group.add_argument('--position_metric', type=str, default="p_denoise", help='Position metric for p_denoise')
     sampling_argument_group.add_argument('--token_sampling', type=str, default="categorical", help='Token sampling strategy for p_denoise')
+    sampling_argument_group.add_argument('--uniform_noise', type=str, default="none", help='Uniform noise strategy for p_denoise')
 
     args = parser.parse_args()
 
@@ -153,6 +154,7 @@ if __name__ == "__main__":
                 "position_sampling": args.position_sampling,
                 "position_metric": args.position_metric,
                 "token_sampling": args.token_sampling,
+                "uniform_noise": args.uniform_noise,
             }
         }
     })

@@ -7,7 +7,7 @@ export VECLIB_MAXIMUM_THREADS=3
 
 num_jobs=6
 
-num_samples=64
+num_samples=6400
 batch_size=64
 min_p=0
 compile_torch=0
@@ -94,25 +94,30 @@ self_correction_strategies=(
     # "max"
 )
 oracles=(
-    # "perfect"
+    "perfect"
     "model"
     # "recurrence"
     # "model_and_recurrence"
-    # "model_EMA"
+    "model_EMA"
 )
 position_sampling_strategies=(
     "independent"
-    # "top_k"
+    "top_k"
 )
 position_metric_strategies=(
     "p_denoise"
-    # "confident_and_p_denoise"
-    # "confident_and_noisy"
+    "confident_and_p_denoise"
+    "confident_and_noisy"
 )
 token_sampling_strategies=(
     "categorical"
-    # "change_max"
-    # "max"
+    "change_max"
+    "max"
+)
+uniform_noise_strategies=(
+    "none"
+    "noise"
+    "model"
 )
 
 output_dir="$( dirname "${BASH_SOURCE[0]}" )/../../outputs/evaluate_all"
@@ -353,7 +358,13 @@ if [ $build_combinations_file = true ]; then
                                         for position_sampling in "${position_sampling_strategies[@]}"; do
                                             for position_metric in "${position_metric_strategies[@]}"; do
                                                 for token_sampling in "${token_sampling_strategies[@]}"; do
-                                                    echo "$ckpt,gidd_prob_to_recover_data,oracle=$oracle position_sampling=$position_sampling position_metric=$position_metric token_sampling=$token_sampling $suffix" >> $combinations_file
+                                                    if [[ "$position_sampling" == "independent" && "$position_metric" == "p_denoise" ]]; then
+                                                        for uniform_noise in "${uniform_noise_strategies[@]}"; do
+                                                            echo "$ckpt,gidd_prob_to_recover_data,oracle=$oracle position_sampling=$position_sampling position_metric=$position_metric token_sampling=$token_sampling uniform_noise=$uniform_noise $suffix" >> $combinations_file
+                                                        done
+                                                    else
+                                                        echo "$ckpt,gidd_prob_to_recover_data,oracle=$oracle position_sampling=$position_sampling position_metric=$position_metric token_sampling=$token_sampling $suffix" >> $combinations_file
+                                                    fi
                                                 done
                                             done
                                         done
@@ -369,7 +380,7 @@ if [ $build_combinations_file = true ]; then
 fi
 # cat $combinations_file
 
-echo "accuracy,correctly_filled_cells,not_fully_unmasked,checkpoint,strategy,params,denoised_fraction,mask_fraction,uniform_fraction,history" > $csv_file
+echo "accuracy,correctly_filled_cells,not_fully_unmasked,checkpoint,strategy,params,true_denoised_fraction,denoised_fraction,mask_fraction,uniform_fraction,history" > $csv_file
 
 evaluate_one_py="$( cd $( dirname "${BASH_SOURCE[0]}" ) && pwd )/evaluate_one.py"
 export evaluate_one_py
@@ -405,11 +416,12 @@ cat $combinations_file | parallel --colsep ',' -j $num_jobs '
     CORRECTLY_FILLED_CELLS=$(echo "$OUTPUT" | grep -oP "correctly_filled_cells=\K[0-9.]+")
     NOT_FULLY_UNMASKED=$(echo "$OUTPUT" | grep -oP "not_fully_unmasked=\K[0-9.]+")
     HISTORY=$(echo "$OUTPUT" | grep -oP "\"num_steps=[0-9]+ seq_len=[0-9]+ history=[0-9 ]+\"")
+    TRUE_DENOISED_FRACTION=$(echo "$OUTPUT" | grep -oP "\"true_denoised_fraction=[^\"]+\"")
     DENOISED_FRACTION=$(echo "$OUTPUT" | grep -oP "\"denoised_fraction=[^\"]+\"")
     MASK_FRACTION=$(echo "$OUTPUT" | grep -oP "\"mask_fraction=[^\"]+\"")
     UNIFORM_FRACTION=$(echo "$OUTPUT" | grep -oP "\"uniform_fraction=[^\"]+\"")
     # echo "$ACCURACY,$CORRECTLY_FILLED_CELLS,$NOT_FULLY_UNMASKED,$CKPT,$STRATEGY,\"$PARAMS_ORIGINAL\",$HISTORY" >> $csv_file
-    echo "$ACCURACY,$CORRECTLY_FILLED_CELLS,$NOT_FULLY_UNMASKED,$CKPT,$STRATEGY,\"$PARAMS_ORIGINAL\",$DENOISED_FRACTION,$MASK_FRACTION,$UNIFORM_FRACTION,$HISTORY" >> $csv_file
+    echo "$ACCURACY,$CORRECTLY_FILLED_CELLS,$NOT_FULLY_UNMASKED,$CKPT,$STRATEGY,\"$PARAMS_ORIGINAL\",$TRUE_DENOISED_FRACTION,$DENOISED_FRACTION,$MASK_FRACTION,$UNIFORM_FRACTION,$HISTORY" >> $csv_file
     echo "Output for line $(({#})):"
     echo "$OUTPUT"
 
