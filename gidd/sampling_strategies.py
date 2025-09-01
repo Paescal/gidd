@@ -455,6 +455,7 @@ class SamplingStrategy(nn.Module):
         self.tokenizer = tokenizer
         self.t_eps = t_eps
 
+    @torch.no_grad()
     def initialize(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device):
         self.initial_z_t = initial_z_t.to(device, non_blocking=True)
         self.diffusion_mask = diffusion_mask.to(device, non_blocking=True)
@@ -466,10 +467,12 @@ class SamplingStrategy(nn.Module):
         self.device = device
 
     @abstractmethod
+    @torch.no_grad()
     def stopping_criterion(self, i):
         raise NotImplementedError
     
     @abstractmethod
+    @torch.no_grad()
     def step(self, i, generation_info_handler):
         raise NotImplementedError
 
@@ -480,6 +483,7 @@ class Gidd_independent_steps(SamplingStrategy):
         self.sampling_strategy = sampling_strategy
         self.self_correction = self_correction
 
+    @torch.no_grad()
     def initialize(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device):
         super().initialize(initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device)
         self.ts = torch.linspace(0, 1, self.num_denoising_steps + 1, device=device).unsqueeze(-1)
@@ -521,6 +525,7 @@ class Gidd_flattened(SamplingStrategy):
         self.sampling_strategy = sampling_strategy
         self.self_correction = self_correction
 
+    @torch.no_grad()
     def initialize(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device):
         super().initialize(initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device)
         self.ts = torch.linspace(0, 1, self.num_denoising_steps + 1, device=device).unsqueeze(-1)
@@ -562,6 +567,7 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
         super().__init__(model, noise_schedule, tokenizer, t_eps)
         self.config = config
 
+    @torch.no_grad()
     def initialize(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device):
         super().initialize(initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps + num_self_correction_steps, 0, max_length, device)
         # super().initialize(initial_z_t, diffusion_mask, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device)
@@ -628,7 +634,7 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                 p_zt_x = weight * p_zt_x_model + (1 - weight) * p_zt_x_recurrence
             elif self.config.oracle == "model_EMA":
                 p_zt_x_model = probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
-                weight = 0.5
+                weight = 0.1
                 p_zt_x = weight * p_zt_x_model + (1 - weight) * self.p_zs_x
 
             p_zs_x_and_zt_x = p_zt_x * (alpha_s + beta_pi_s_at_not_m) * (alpha_ts + beta_pi_ts_at_not_m) / (alpha_t + beta_pi_t_at_not_m)
@@ -636,8 +642,9 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
 
             # p_zs_nx_and_zt_nx = (1 - p_zt_x) * (1 - (alpha_s + beta_pi_s_at_not_m) * beta_pi_ts_at_zt / beta_pi_t_at_zt)
             p_zs_u_and_zt_m = (vocab_size_semantically - 2) * beta_pi_s_at_not_m * beta_pi_ts_at_m / beta_pi_t_at_m
+            # print(f"{i}: p_zs_u_and_zt_m: {p_zs_u_and_zt_m.max()}, {p_zs_u_and_zt_m.min()}") # ~1-2%
             
-            # use p_zt_x as stopping criterion
+            # use p_zt_x as stopping criterion # TODO: Investigate effect of current stopping criterion and try others
             denoised = p_zt_x > 0.9
             denoised = denoised | ~self.diffusion_mask.bool()
             self.is_fully_denoised = denoised.all(dim=1)
@@ -673,7 +680,6 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                     update_positions = sample_position_top_k_gumbel(probs.max(-1).values * p_zs_x_and_zt_nx * updatable_positions, 1, 0)
                 elif self.config.position_metric == "confident_and_noisy":
                     update_positions = sample_position_top_k_gumbel(probs.max(-1).values * (1 - p_zt_x) * updatable_positions, 1, 0)
-                    # update_positions = sample_position_top_k_gumbel((probs.max(-1).values + (1 - self.p_zt_x)) * self.diffusion_mask, 1, 0)
 
             # update selected positions
             if self.config.token_sampling == "categorical":
@@ -690,9 +696,6 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                 next_z_t_noise = torch.randint(0, self.tokenizer.mask_token_id, self.z_t.shape, device=self.device)
             elif self.config.uniform_noise == "model":
                 next_z_t_noise = next_z_t
-            
-
-            # TODO: decide whether to update based on p_zs_nx_and_zt_nx (transitions x' -> u and x' -> x', for x' != x (either x' = m or x' = u))
             
             update_positions = update_positions * self.diffusion_mask
             uniform_noise_positions = uniform_noise_positions * self.diffusion_mask
@@ -718,10 +721,13 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
         # print(f"{i}: num update positions: {update_positions.sum()}, num uniform noise positions: {uniform_noise_positions.sum()}")
 
 
-        if i == self.num_denoising_steps + self.num_self_correction_steps - 1 and generation_info_handler is not None:
-            generation_info_handler.batch_step_history(self.z_t)
-            logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
-            logits[..., self.tokenizer.mask_token_id:] = -1e6
-            probs = logits.softmax(-1)
-            p_zt_x = probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
-            generation_info_handler.batch_step_marginals(self.z_t, p_zt_x, self.tokenizer.mask_token_id)
+        if generation_info_handler is not None:
+            if i == self.num_denoising_steps + self.num_self_correction_steps - 1:
+                generation_info_handler.batch_step_history(self.z_t)
+                logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
+                logits[..., self.tokenizer.mask_token_id:] = -1e6
+                probs = logits.softmax(-1)
+                p_zt_x = probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
+                generation_info_handler.batch_step_marginals(self.z_t, p_zt_x, self.tokenizer.mask_token_id)
+            else:
+                generation_info_handler.batch_step_change_events(i, self.z_t, probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1), self.tokenizer.mask_token_id)

@@ -48,7 +48,7 @@ def main(args, sampling_config):
     with tqdm.tqdm(total=args.num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
         with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
             data_loader = iter(data_loader)
-            generation_info_handler = GenerationInfoHandler(max_seq_len=ckpt_config.model.max_seq_len, info=["history", "marginals"])
+            generation_info_handler = GenerationInfoHandler(max_seq_len=ckpt_config.model.max_seq_len, info=["history", "marginals", "change_events"])
             for i in range(0, args.num_samples, args.batch_size):
                 batch = next(data_loader)
                 bs = min(args.batch_size, args.num_samples - i)
@@ -81,7 +81,24 @@ def main(args, sampling_config):
     print(f"not_fully_unmasked={not_fully_unmasked:.4f}")
     
     generation_info_handler.collect_history = True
-    generation_info_handler.print_info()
+    generation_info_handler.save_info("/local/home/prisold/gidd/outputs/generation_info")
+    # meta, history, marginals, change_events_table = generation_info_handler.load_all("/local/home/prisold/gidd/outputs/generation_info")
+    # import pandas as pd
+    # if history is not None:
+    #     print("history:", history.shape)
+
+    # if marginals is not None:
+    #     print("total_accuracy shape:", marginals["total_accuracy"].shape)
+
+    # if isinstance(change_events_table, pd.DataFrame):
+    #     print(change_events_table.head())
+    #     # Example: conversion rates by step
+    #     by_step = (change_events_table.query('event_type == "uniform_to_denoised"')
+    #                     .groupby("step").size()
+    #             / change_events_table.groupby("step").size())
+    #     print("uniform->denoised share by step:\n", by_step)
+    
+    # generation_info_handler.print_info()
     
     # chosen_sample_for_history = 4 # debugging for checkpoints/gidd_0_2/100_epochs,gidd_keep_where_confident,"score_position_for_change=change_max select_position=top_k_gumbel change_token=change_max k=1 gumbel_noise_coefficient=0 self_correction=none dataset=hard num_samples=64 num_denoising_steps=81 batch_size=64 min_p=0 compile_torch=0 seed=1"
     # chosen_sample_for_history = 32 # debugging for gidd_independent_positions_decomposed_update_distribution vs gidd_emulate_mdlm_vanilla

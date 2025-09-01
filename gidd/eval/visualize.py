@@ -413,6 +413,8 @@ def visualize_sampling_process(csv_file, mask_token_id, rows_to_visualize, visua
         histories = []
         marginals = []
         for row in reader:
+            if not row['history'].strip():
+                continue
             history_str = row['history']
             history, solution = history_str_to_tensor(history_str)
             histories.append({
