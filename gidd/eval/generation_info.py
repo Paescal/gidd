@@ -2,11 +2,14 @@ import torch
 import time
 from typing import Optional, Dict, Any
 from gidd.eval.visualize import history_to_str, marginals_to_str
+# from gidd.eval.evaluate_one import namespace_to_dict
 
 class GenerationInfoHandler:
-    def __init__(self, max_seq_len, info:list=[]):
+    def __init__(self, max_seq_len, sampling_config_dict, noise_schedule, info:list=[]):
         self.num_samples = 0
         self.max_seq_len = max_seq_len
+        self.sampling_config_dict = sampling_config_dict
+        self.noise_schedule = noise_schedule
         if "history" in info:
             self.collect_history = True
             self.history = None
@@ -21,6 +24,7 @@ class GenerationInfoHandler:
             self.p_zt_x_min = None # taken over positions, per sample
             self.p_zt_x_max = None # taken over positions, per sample
             self.cell_accuracy = None # average over positions, per sample
+            self.expected_cell_accuracy = None # values over time steps (same for all positions and samples)
             self.total_accuracy = None # averaged over samples
         if "change_events" in info:
             self.collect_change_events = True
@@ -44,6 +48,7 @@ class GenerationInfoHandler:
             self.batch_p_zt_x_min = []
             self.batch_p_zt_x_max = []
             self.batch_cell_accuracy = []
+            self.batch_expected_cell_accuracy = []
             self.batch_total_accuracy = []
         if getattr(self, "collect_change_events", False):
             self.old_z_t = initial_z_t.clone().to(device=device, non_blocking=True)
@@ -54,15 +59,17 @@ class GenerationInfoHandler:
         if getattr(self, "collect_history", False):
             self.batch_history.append(z_t.clone()[:, -self.max_seq_len:])
 
-    def batch_step_marginals(self, z_t, p_zt_x, mask_token_id):
+    def batch_step_marginals(self, z_t, p_zt_x, t, mask_token_id):
         if getattr(self, "collect_marginals", False):
             cell_accuracy_by_sample = ((z_t == self.batch_solution) * self.diffusion_mask).sum(dim=-1) / self.num_diffusion_positions_by_sample
-            total_accuracy_by_sample = ((z_t == self.batch_solution) | ~self.diffusion_mask).all(dim=-1)
+            total_accuracy_by_sample = ((z_t == self.batch_solution) | ~self.diffusion_mask.bool()).all(dim=-1)
             mask_fraction_by_sample = ((z_t == mask_token_id) * self.diffusion_mask).sum(dim=-1) / self.num_diffusion_positions_by_sample
             p_zt_x_mean_by_sample = (p_zt_x * self.diffusion_mask).sum(dim=-1) / self.num_diffusion_positions_by_sample
             p_zt_x_std_by_sample = torch.sqrt((torch.pow(p_zt_x - p_zt_x_mean_by_sample.unsqueeze(-1), 2) * self.diffusion_mask).sum(dim=-1) / (self.num_diffusion_positions_by_sample - 1).clamp(min=0)) # nan if less than 2 diffusion positions
             p_zt_x_min_by_sample = torch.where(self.diffusion_mask.bool(), p_zt_x, 1).min(dim=-1).values
             p_zt_x_max_by_sample = torch.where(self.diffusion_mask.bool(), p_zt_x, 0).max(dim=-1).values
+            alpha_t, beta_pi_t = self.noise_schedule.get_alpha_betapi(t)
+            expected_cell_accuracy = alpha_t[0, 0].item() + beta_pi_t[0, self.noise_schedule.not_mask_id].item()
 
             self.batch_true_denoised_fraction.append(cell_accuracy_by_sample.sum().item())
             self.batch_denoised_fraction.append(p_zt_x_mean_by_sample.sum().item())
@@ -73,6 +80,7 @@ class GenerationInfoHandler:
             self.batch_p_zt_x_min.append(p_zt_x_min_by_sample)
             self.batch_p_zt_x_max.append(p_zt_x_max_by_sample)
             self.batch_cell_accuracy.append(cell_accuracy_by_sample)
+            self.batch_expected_cell_accuracy.append(expected_cell_accuracy)
             self.batch_total_accuracy.append(total_accuracy_by_sample.sum().item())
 
     def batch_step_change_events(self, step, new_z_t, model_confidence_new_z_t, mask_token_id):
@@ -114,10 +122,8 @@ class GenerationInfoHandler:
     def batch_finalize(self):
         self.num_samples += self.batch_size
         if getattr(self, "collect_history", False):
-            # self.batch_history = torch.stack(self.batch_history, dim=0).permute(1, 0, 2)
             self.batch_history = torch.stack(self.batch_history, dim=1)
             self.batch_history = torch.cat([self.batch_history, self.batch_solution[:, -self.max_seq_len:].unsqueeze(1)], dim=1)
-            # TODO: don't keep history of conditioning
             if self.history is None:
                 self.history = self.batch_history
             else:
@@ -140,6 +146,7 @@ class GenerationInfoHandler:
                 self.p_zt_x_min = torch.stack(self.batch_p_zt_x_min, dim=-1)
                 self.p_zt_x_max = torch.stack(self.batch_p_zt_x_max, dim=-1)
                 self.cell_accuracy = torch.stack(self.batch_cell_accuracy, dim=-1)
+                self.expected_cell_accuracy = torch.tensor(self.batch_expected_cell_accuracy)
                 self.total_accuracy = self.batch_total_accuracy
             else:
                 if self.true_denoised_fraction.shape != self.batch_true_denoised_fraction.shape:
@@ -153,6 +160,7 @@ class GenerationInfoHandler:
                 self.p_zt_x_min = torch.cat([self.p_zt_x_min, torch.stack(self.batch_p_zt_x_min, dim=-1)], dim=0)
                 self.p_zt_x_max = torch.cat([self.p_zt_x_max, torch.stack(self.batch_p_zt_x_max, dim=-1)], dim=0)
                 self.cell_accuracy = torch.cat([self.cell_accuracy, torch.stack(self.batch_cell_accuracy, dim=-1)], dim=0)
+                self.expected_cell_accuracy = self.expected_cell_accuracy # NOP, as long as the number of denoising steps stays the same, so does this
                 self.total_accuracy = self.total_accuracy + self.batch_total_accuracy
         if getattr(self, "collect_change_events", False):
             if self.change_events is None:
@@ -178,6 +186,7 @@ class GenerationInfoHandler:
                 "p_zt_x_min": self.p_zt_x_min, # shape (num_samples, num_denoising_steps)
                 "p_zt_x_max": self.p_zt_x_max, # shape (num_samples, num_denoising_steps)
                 "cell_accuracy": self.cell_accuracy, # shape (num_samples, num_denoising_steps)
+                "expected_cell_accuracy": self.expected_cell_accuracy, # shape (num_denoising_steps)
                 "total_accuracy": self.total_accuracy / self.num_samples, # shape (num_denoising_steps)
             }
         else:
@@ -210,15 +219,14 @@ class GenerationInfoHandler:
 
         meta = dict(meta or {})
         meta.update({
-            "version": "1.0",
-            "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S %Z", time.gmtime()),
             "num_samples": getattr(self, "num_samples", None),
             "max_seq_len": getattr(self, "max_seq_len", None),
-            "batch_seq_len": getattr(self, "batch_seq_len", None),
             "collect_history": getattr(self, "collect_history", False),
             "collect_marginals": getattr(self, "collect_marginals", False),
             "collect_change_events": getattr(self, "collect_change_events", False),
         })
+        meta.update(self.sampling_config_dict)
 
         if getattr(self, "collect_history", False):
             history = self.get_history().detach().cpu()

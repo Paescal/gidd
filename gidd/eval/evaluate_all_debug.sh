@@ -7,7 +7,7 @@ export VECLIB_MAXIMUM_THREADS=3
 
 num_jobs=6
 
-num_samples=6400
+num_samples=640
 batch_size=64
 min_p=0
 compile_torch=0
@@ -117,7 +117,7 @@ token_sampling_strategies=(
 uniform_noise_strategies=(
     "none"
     "noise"
-    "model"
+    # "model"
 )
 
 output_dir="$( dirname "${BASH_SOURCE[0]}" )/../../outputs/evaluate_all"
@@ -407,7 +407,8 @@ cat $combinations_file | parallel --colsep ',' -j $num_jobs '
     PARAMS_ORIGINAL={3}
     PARAMS=$(echo "$PARAMS_ORIGINAL" | sed "s/\([^ =]*=[^ ]*\)/--\1/g")
 
-    CMD="python3 $evaluate_one_py --checkpoint $CKPT --strategy $STRATEGY $PARAMS"
+    # CMD="python3 $evaluate_one_py --checkpoint $CKPT --strategy $STRATEGY $PARAMS"
+    CMD="python3 $evaluate_one_py --checkpoint $CKPT --strategy $STRATEGY $PARAMS --combinations_row=$(({#}))"
     CMD="$CMD --device=$GPU"
     # echo "Running on GPU $GPU: $CMD"
     echo "Running line $(({#}))"

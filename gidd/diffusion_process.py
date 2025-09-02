@@ -26,6 +26,7 @@ class NoiseSchedule(nn.Module, ABC):
         super().__init__()
         self.tokenizer = tokenizer
         self.mask_id = tokenizer.mask_token_id
+        self.not_mask_id = 0
         # self.vocab_size = len(tokenizer)
         self.vocab_size_architecturally = len(tokenizer)
         self.vocab_size_semantically = tokenizer.mask_token_id + 1 # TODO: Assumption: mask token is the last token in the vocabulary

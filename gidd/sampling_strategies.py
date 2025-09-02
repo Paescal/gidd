@@ -576,7 +576,7 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
         self.z_t = self.initial_z_t.clone()
         self.p_zs_x = torch.zeros_like(self.initial_z_t, dtype=torch.float, device=device)
         self.is_fully_denoised = torch.zeros(self.initial_z_t.shape[0], dtype=torch.bool, device=device)
-        self.not_mask_token_id_tensor = torch.zeros((1, 1), dtype=initial_z_t.dtype, device=device)
+        self.not_mask_token_id_tensor = torch.ones((1, 1), dtype=initial_z_t.dtype, device=device) * self.noise_schedule.not_mask_id
         self.mask_token_id_tensor = torch.ones((1, 1), dtype=initial_z_t.dtype, device=device) * self.tokenizer.mask_token_id
         # self.cum_p_not_denoised = 1.0
 
@@ -713,7 +713,7 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
             
         if generation_info_handler is not None:
             generation_info_handler.batch_step_history(self.z_t)
-            generation_info_handler.batch_step_marginals(self.z_t, p_zt_x, self.tokenizer.mask_token_id)
+            generation_info_handler.batch_step_marginals(self.z_t, p_zt_x, t, self.tokenizer.mask_token_id)
 
         self.z_t = torch.where(update_positions.bool(), next_z_t, self.z_t)
         self.z_t = torch.where(uniform_noise_positions.bool(), next_z_t_noise, self.z_t)
@@ -728,6 +728,6 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                 logits[..., self.tokenizer.mask_token_id:] = -1e6
                 probs = logits.softmax(-1)
                 p_zt_x = probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
-                generation_info_handler.batch_step_marginals(self.z_t, p_zt_x, self.tokenizer.mask_token_id)
+                generation_info_handler.batch_step_marginals(self.z_t, p_zt_x, t, self.tokenizer.mask_token_id)
             else:
                 generation_info_handler.batch_step_change_events(i, self.z_t, probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1), self.tokenizer.mask_token_id)

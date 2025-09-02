@@ -25,6 +25,14 @@ def dict_to_namespace(d):
     else:
         return d
 
+def namespace_to_dict(ns):
+    if isinstance(ns, SimpleNamespace):
+        return {k: namespace_to_dict(v) for k, v in vars(ns).items()}
+    elif isinstance(ns, list):
+        return [namespace_to_dict(i) for i in ns]
+    else:
+        return ns
+
 def main(args, sampling_config):
     device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
     torch.set_float32_matmul_precision('high')
@@ -48,7 +56,7 @@ def main(args, sampling_config):
     with tqdm.tqdm(total=args.num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
         with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
             data_loader = iter(data_loader)
-            generation_info_handler = GenerationInfoHandler(max_seq_len=ckpt_config.model.max_seq_len, info=["history", "marginals", "change_events"])
+            generation_info_handler = GenerationInfoHandler(info=["history", "marginals", "change_events"], max_seq_len=ckpt_config.model.max_seq_len, sampling_config_dict=namespace_to_dict(sampling_config), noise_schedule=noise_schedule)
             for i in range(0, args.num_samples, args.batch_size):
                 batch = next(data_loader)
                 bs = min(args.batch_size, args.num_samples - i)
@@ -62,6 +70,8 @@ def main(args, sampling_config):
                         # history_solution = solutions_tokenized
                     else:
                         generation_info_handler.collect_history = False
+                        generation_info_handler.collect_marginals = False
+                        generation_info_handler.collect_change_events = False
                         samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, generation_info_handler=generation_info_handler, keep_history=False)
 
                 if ckpt_config.model.puzzle_conditioning == 'in_context':
@@ -81,7 +91,9 @@ def main(args, sampling_config):
     print(f"not_fully_unmasked={not_fully_unmasked:.4f}")
     
     generation_info_handler.collect_history = True
-    generation_info_handler.save_info("/local/home/prisold/gidd/outputs/generation_info")
+    generation_info_handler.collect_marginals = True
+    generation_info_handler.collect_change_events = True
+    generation_info_handler.save_info(f"/local/home/prisold/gidd/outputs/generation_info/combination_{args.combinations_row}")
     # meta, history, marginals, change_events_table = generation_info_handler.load_all("/local/home/prisold/gidd/outputs/generation_info")
     # import pandas as pd
     # if history is not None:
@@ -132,7 +144,8 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
     parser.add_argument('--min_p', type=float, default=0, help='Minimum probability to be chosen in categorical sampling')
     parser.add_argument('--compile_torch', type=int, default=False, help='Whether to compile the torch model')
-    
+    parser.add_argument('--combinations_row', type=int, default=0, help='Row id for combinations file of current combination')
+
     sampling_argument_group = parser.add_argument_group('Sampling arguments')
     sampling_argument_group.add_argument('--strategy', type=str, required=True, help='Sampling strategy to evaluate')
     sampling_argument_group.add_argument('--score_mask_position', type=str, default=None, help='Scoring function for unmasking a position')
