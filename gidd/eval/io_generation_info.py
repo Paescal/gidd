@@ -46,6 +46,7 @@ def save_change_events_table(change_events: list[list[dict]], out_dir: str) -> s
                     "new_value": ev["new_value"],
                     "event_type": ev["event_type"],
                     "model_confidence": ev["model_confidence"],
+                    "model_confidence_after": ev.get("model_confidence_after", None),
                 })
         df = pd.DataFrame(rows)
         path_parquet = os.path.join(out_dir, "change_events.parquet")

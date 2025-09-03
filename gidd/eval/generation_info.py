@@ -52,6 +52,7 @@ class GenerationInfoHandler:
             self.batch_total_accuracy = []
         if getattr(self, "collect_change_events", False):
             self.old_z_t = initial_z_t.clone().to(device=device, non_blocking=True)
+            self.batch_change_events_incomplete = [[] for _ in range(self.batch_size)]
             self.batch_change_events = [[] for _ in range(self.batch_size)]
             
     
@@ -83,7 +84,7 @@ class GenerationInfoHandler:
             self.batch_expected_cell_accuracy.append(expected_cell_accuracy)
             self.batch_total_accuracy.append(total_accuracy_by_sample.sum().item())
 
-    def batch_step_change_events(self, step, new_z_t, model_confidence_new_z_t, mask_token_id):
+    def batch_step_change_events(self, step, new_z_t, probs, mask_token_id):
         def get_change_event_type(old_value, new_value, true_value, mask_token_id):
             old_is_uniform_token = old_value != mask_token_id and old_value != true_value
             new_is_uniform_token = new_value != mask_token_id and new_value != true_value
@@ -106,15 +107,25 @@ class GenerationInfoHandler:
             change_indices_rows, change_indices_columns = has_changed.nonzero(as_tuple=True)
             old_values = self.old_z_t[change_indices_rows, change_indices_columns]
             new_values = new_z_t[change_indices_rows, change_indices_columns]
+            model_confidence_new_z_t = probs.gather(-1, new_z_t.unsqueeze(-1)).squeeze(-1)
+
+            for i, sample_change_events_incomplete in enumerate(self.batch_change_events_incomplete):
+                for change_event in sample_change_events_incomplete:
+                    position = change_event["position"] + self.batch_seq_len - self.max_seq_len
+                    token = change_event["new_value"]
+                    change_event["model_confidence_after"] = probs[i, position, token].item()
+                    self.batch_change_events[i].append(change_event)
+                self.batch_change_events_incomplete[i] = []
 
             for sample, position, old_value, new_value in zip(change_indices_rows.tolist(), change_indices_columns.tolist(), old_values.cpu().tolist(), new_values.cpu().tolist()):
-                self.batch_change_events[sample].append({
+                self.batch_change_events_incomplete[sample].append({
                     "step": step,
                     "position": position - self.batch_seq_len + self.max_seq_len,
                     "old_value": old_value,
                     "new_value": new_value,
                     "event_type": get_change_event_type(old_value, new_value, self.batch_solution[sample, position].item(), mask_token_id),
                     "model_confidence": model_confidence_new_z_t[sample, position].item(),
+                    "model_confidence_after": None
                 })
 
             self.old_z_t = new_z_t
@@ -163,6 +174,8 @@ class GenerationInfoHandler:
                 self.expected_cell_accuracy = self.expected_cell_accuracy # NOP, as long as the number of denoising steps stays the same, so does this
                 self.total_accuracy = self.total_accuracy + self.batch_total_accuracy
         if getattr(self, "collect_change_events", False):
+            for i, sample_change_events_incomplete in enumerate(self.batch_change_events_incomplete):
+                self.batch_change_events[i].extend(sample_change_events_incomplete)
             if self.change_events is None:
                 self.change_events = self.batch_change_events
             else:

@@ -730,4 +730,4 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                 p_zt_x = probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
                 generation_info_handler.batch_step_marginals(self.z_t, p_zt_x, t, self.tokenizer.mask_token_id)
             else:
-                generation_info_handler.batch_step_change_events(i, self.z_t, probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1), self.tokenizer.mask_token_id)
+                generation_info_handler.batch_step_change_events(i, self.z_t, probs, self.tokenizer.mask_token_id)
