@@ -2,6 +2,7 @@ import torch
 import time
 from typing import Optional, Dict, Any
 from gidd.eval.visualize import history_to_str, marginals_to_str
+from gidd.utils import mean_over_diffusion_positions
 # from gidd.eval.evaluate_one import namespace_to_dict
 
 class GenerationInfoHandler:
@@ -13,6 +14,9 @@ class GenerationInfoHandler:
         if "history" in info:
             self.collect_history = True
             self.history = None
+        if "logits" in info:
+            self.collect_logits = True
+            self.logits = None
         if "marginals" in info:
             self.collect_marginals = True
             self.true_denoised_fraction = None # averaged over samples
@@ -37,7 +41,9 @@ class GenerationInfoHandler:
         self.num_diffusion_positions_by_sample = self.diffusion_mask.sum(dim=1)
         self.batch_solution = solution.to(device=device, non_blocking=True)
         if getattr(self, "collect_history", False):
-            self.batch_history = [initial_z_t.clone().to(device=device, non_blocking=True)[:, -self.max_seq_len:]]
+            self.batch_history = []
+        if getattr(self, "collect_logits", False):
+            self.batch_logits = []
         if getattr(self, "collect_marginals", False):
             self.batch_true_denoised_fraction = []
             self.batch_denoised_fraction = []
@@ -60,12 +66,16 @@ class GenerationInfoHandler:
         if getattr(self, "collect_history", False):
             self.batch_history.append(z_t.clone()[:, -self.max_seq_len:])
 
+    def batch_step_logits(self, logits):
+        if getattr(self, "collect_logits", False):
+            self.batch_logits.append(logits.clone()[:, -self.max_seq_len:, :])
+
     def batch_step_marginals(self, z_t, p_zt_x, t, mask_token_id):
         if getattr(self, "collect_marginals", False):
             cell_accuracy_by_sample = ((z_t == self.batch_solution) * self.diffusion_mask).sum(dim=-1) / self.num_diffusion_positions_by_sample
             total_accuracy_by_sample = ((z_t == self.batch_solution) | ~self.diffusion_mask.bool()).all(dim=-1)
             mask_fraction_by_sample = ((z_t == mask_token_id) * self.diffusion_mask).sum(dim=-1) / self.num_diffusion_positions_by_sample
-            p_zt_x_mean_by_sample = (p_zt_x * self.diffusion_mask).sum(dim=-1) / self.num_diffusion_positions_by_sample
+            p_zt_x_mean_by_sample = mean_over_diffusion_positions(p_zt_x, self.diffusion_mask)
             p_zt_x_std_by_sample = torch.sqrt((torch.pow(p_zt_x - p_zt_x_mean_by_sample.unsqueeze(-1), 2) * self.diffusion_mask).sum(dim=-1) / (self.num_diffusion_positions_by_sample - 1).clamp(min=0)) # nan if less than 2 diffusion positions
             p_zt_x_min_by_sample = torch.where(self.diffusion_mask.bool(), p_zt_x, 1).min(dim=-1).values
             p_zt_x_max_by_sample = torch.where(self.diffusion_mask.bool(), p_zt_x, 0).max(dim=-1).values
@@ -107,6 +117,7 @@ class GenerationInfoHandler:
             change_indices_rows, change_indices_columns = has_changed.nonzero(as_tuple=True)
             old_values = self.old_z_t[change_indices_rows, change_indices_columns]
             new_values = new_z_t[change_indices_rows, change_indices_columns]
+            model_confidence_old_z_t = probs.gather(-1, self.old_z_t.unsqueeze(-1)).squeeze(-1)
             model_confidence_new_z_t = probs.gather(-1, new_z_t.unsqueeze(-1)).squeeze(-1)
 
             for i, sample_change_events_incomplete in enumerate(self.batch_change_events_incomplete):
@@ -124,6 +135,7 @@ class GenerationInfoHandler:
                     "old_value": old_value,
                     "new_value": new_value,
                     "event_type": get_change_event_type(old_value, new_value, self.batch_solution[sample, position].item(), mask_token_id),
+                    "old_value_confidence": model_confidence_old_z_t[sample, position].item(),
                     "model_confidence": model_confidence_new_z_t[sample, position].item(),
                     "model_confidence_after": None
                 })
@@ -141,6 +153,14 @@ class GenerationInfoHandler:
                 if self.history.shape[1] != self.batch_history.shape[1] or self.history.shape[2] != self.batch_history.shape[2]:
                     raise ValueError("Inconsistent history shapes")
                 self.history = torch.cat([self.history, self.batch_history], dim=0)
+        if getattr(self, "collect_logits", False):
+            self.batch_logits = torch.stack(self.batch_logits, dim=1)
+            if self.logits is None:
+                self.logits = self.batch_logits
+            else:
+                if self.logits.shape[1] != self.batch_logits.shape[1] or self.logits.shape[2] != self.batch_logits.shape[2] or self.logits.shape[3] != self.batch_logits.shape[3]:
+                    raise ValueError("Inconsistent logits shapes")
+                self.logits = torch.cat([self.logits, self.batch_logits], dim=0)
         if getattr(self, "collect_marginals", False):
             self.batch_true_denoised_fraction = torch.tensor(self.batch_true_denoised_fraction)
             self.batch_denoised_fraction = torch.tensor(self.batch_denoised_fraction)
@@ -187,6 +207,12 @@ class GenerationInfoHandler:
         else:
             raise ValueError("History was not collected")
     
+    def get_logits(self):
+        if getattr(self, "collect_logits", False):
+            return self.logits # shape (num_samples, num_denoising_steps, seq_len, vocab_size)
+        else:
+            raise ValueError("Logits were not collected")
+
     def get_marginals(self):
         if getattr(self, "collect_marginals", False):
             return {
@@ -226,7 +252,7 @@ class GenerationInfoHandler:
         Saves collected data to `out_dir` with a stable schema.
         """
         from io_generation_info import (
-            _ensure_dir, save_meta, save_history, save_marginals, save_change_events_table
+            _ensure_dir, save_meta, save_history, save_logits, save_marginals, save_change_events_table
         )
         _ensure_dir(out_dir)
 
@@ -236,6 +262,7 @@ class GenerationInfoHandler:
             "num_samples": getattr(self, "num_samples", None),
             "max_seq_len": getattr(self, "max_seq_len", None),
             "collect_history": getattr(self, "collect_history", False),
+            "collect_logits": getattr(self, "collect_logits", False),
             "collect_marginals": getattr(self, "collect_marginals", False),
             "collect_change_events": getattr(self, "collect_change_events", False),
         })
@@ -245,6 +272,11 @@ class GenerationInfoHandler:
             history = self.get_history().detach().cpu()
             meta["history_shape"] = list(history.shape)
             save_history(history, out_dir)
+
+        if getattr(self, "collect_logits", False):
+            logits = self.get_logits().detach().cpu()
+            meta["logits_shape"] = list(logits.shape)
+            save_logits(logits, out_dir)
 
         if getattr(self, "collect_marginals", False):
             marginals = self.get_marginals()
@@ -264,10 +296,11 @@ class GenerationInfoHandler:
         """
         Convenience loader that returns (meta, history, marginals, change_events_df_or_list)
         """
-        from io_generation_info import load_meta, load_history, load_marginals, load_change_events_table
+        from io_generation_info import load_meta, load_history, load_logits, load_marginals, load_change_events_table
         meta = load_meta(out_dir)
         history = load_history(out_dir, map_location) if meta.get("collect_history") else None
+        logits = load_logits(out_dir, map_location) if meta.get("collect_logits") else None
         marginals = load_marginals(out_dir, map_location) if meta.get("collect_marginals") else None
         # may return pandas.DataFrame or list of dicts depending on availability
         change_events_table = load_change_events_table(out_dir) if meta.get("collect_change_events") else None
-        return meta, history, marginals, change_events_table
+        return meta, history, logits, marginals, change_events_table

@@ -98,10 +98,10 @@ def show_history(histories, diffusion_mask):
     print("-" * len(header))
     print("Note: '.' indicates the token remained unchanged from the previous step.")
 
-def print_sudoku(sudoku, tokenizer):
+def print_sudoku(sudoku, mask_token_id):
     for i, row in enumerate(sudoku):
         for j, element in enumerate(row):
-            if element == tokenizer.mask_token_id:
+            if element == mask_token_id:
                 element = '.'
             elif element >= 9:
                 element = 'X'
@@ -129,7 +129,7 @@ def print_history_interactive(histories, diffusion_mask, tokenizer):
     while True:
         print("\033c", end="")  # Clear screen (for better viewing)
         print(f"Sample {sample_id + 1} of {num_samples}, Step {diffusion_step} of {num_denoising_steps}")
-        print_sudoku(histories[sample_id, diffusion_step].reshape(sudoku_size, sudoku_size).numpy(), tokenizer)
+        print_sudoku(histories[sample_id, diffusion_step].reshape(sudoku_size, sudoku_size).numpy(), tokenizer.mask_token_id)
 
         cmd = input("\n[w] next sample, [s] prev sample, [d] next step, [a] prev step, [q] quit: ").strip().lower()
         if cmd == "w":

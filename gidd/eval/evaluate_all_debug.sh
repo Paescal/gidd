@@ -7,7 +7,7 @@ export VECLIB_MAXIMUM_THREADS=3
 
 num_jobs=6
 
-num_samples=640
+num_samples=64
 batch_size=64
 min_p=0
 compile_torch=0
@@ -94,29 +94,29 @@ self_correction_strategies=(
     # "max"
 )
 oracles=(
-    "perfect"
+    # "perfect"
     "model"
     # "recurrence"
     # "model_and_recurrence"
-    "model_EMA"
+    # "model_EMA"
 )
 position_sampling_strategies=(
-    "independent"
+    # "independent"
     "top_k"
 )
 position_metric_strategies=(
-    "p_denoise"
+    # "p_denoise"
     "confident_and_p_denoise"
-    "confident_and_noisy"
+    # "confident_and_noisy"
 )
 token_sampling_strategies=(
-    "categorical"
+    # "categorical"
     "change_max"
-    "max"
+    # "max"
 )
 uniform_noise_strategies=(
     "none"
-    "noise"
+    # "noise"
     # "model"
 )
 
@@ -407,8 +407,8 @@ cat $combinations_file | parallel --colsep ',' -j $num_jobs '
     PARAMS_ORIGINAL={3}
     PARAMS=$(echo "$PARAMS_ORIGINAL" | sed "s/\([^ =]*=[^ ]*\)/--\1/g")
 
-    # CMD="python3 $evaluate_one_py --checkpoint $CKPT --strategy $STRATEGY $PARAMS"
-    CMD="python3 $evaluate_one_py --checkpoint $CKPT --strategy $STRATEGY $PARAMS --combinations_row=$(({#}))"
+    CMD="python3 $evaluate_one_py --checkpoint $CKPT --strategy $STRATEGY $PARAMS"
+    # CMD="python3 $evaluate_one_py --checkpoint $CKPT --strategy $STRATEGY $PARAMS --combinations_row=$(({#}))"
     CMD="$CMD --device=$GPU"
     # echo "Running on GPU $GPU: $CMD"
     echo "Running line $(({#}))"

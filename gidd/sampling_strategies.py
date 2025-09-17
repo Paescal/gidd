@@ -14,11 +14,13 @@ from gidd.utils import (
     all_positions,
     sample_positions_independently,
     sample_position_top_k_gumbel,
+    sample_position_top_variable_k,
     sample_token_change_max,
     sample_token_change_categorical,
     sample_token_MDM_max,
     sample_token_MDM_categorical,
     sample_categorical,
+    mean_over_diffusion_positions,
 )
 from gidd.self_correction_strategies import get_self_correction
 
@@ -578,15 +580,29 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
         self.is_fully_denoised = torch.zeros(self.initial_z_t.shape[0], dtype=torch.bool, device=device)
         self.not_mask_token_id_tensor = torch.ones((1, 1), dtype=initial_z_t.dtype, device=device) * self.noise_schedule.not_mask_id
         self.mask_token_id_tensor = torch.ones((1, 1), dtype=initial_z_t.dtype, device=device) * self.tokenizer.mask_token_id
+        self.p_zs_x_mean_EMA = torch.zeros((self.initial_z_t.shape[0]), dtype=torch.float, device=device)
         # self.cum_p_not_denoised = 1.0
 
     def stopping_criterion(self, i):
         return self.is_fully_denoised.all() or i >= self.num_denoising_steps
     
     def step(self, i, generation_info_handler):
-        t = self.ts[self.num_denoising_steps - 1 - i]
-        s = self.ts[max(0, self.num_denoising_steps - 2 - i)]
-        logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
+        # time_steps = 'fixed'
+        time_steps = 'inferred'
+        if time_steps == 'fixed':
+            t = self.ts[self.num_denoising_steps - 1 - i]
+            s = self.ts[max(0, self.num_denoising_steps - 2 - i)]
+            logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
+        elif time_steps == 'inferred':
+            p_zs_x_mean = mean_over_diffusion_positions(self.p_zs_x, self.diffusion_mask)
+            p_zs_x_mean_EMA_weight = 0.8
+            self.p_zs_x_mean_EMA = p_zs_x_mean_EMA_weight * self.p_zs_x_mean_EMA + (1 - p_zs_x_mean_EMA_weight) * p_zs_x_mean
+            current_ts = 1 - self.p_zs_x_mean_EMA.unsqueeze(-1).expand(-1, self.ts.shape[0])
+            current_ts = (1 - 2 * self.t_eps) * current_ts + self.t_eps
+            current_ts_indices = (current_ts - self.ts.squeeze(-1)).abs().argmin(-1)
+            t = self.ts[current_ts_indices].squeeze(-1)
+            s = self.ts[torch.maximum(current_ts_indices - 1, torch.zeros_like(current_ts_indices))].squeeze(-1)
+            logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
         logits[..., self.tokenizer.mask_token_id:] = -1e6
         probs = logits.softmax(-1)
         if i == self.num_denoising_steps + self.num_self_correction_steps - 1:
@@ -645,9 +661,10 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
             # print(f"{i}: p_zs_u_and_zt_m: {p_zs_u_and_zt_m.max()}, {p_zs_u_and_zt_m.min()}") # ~1-2%
             
             # use p_zt_x as stopping criterion # TODO: Investigate effect of current stopping criterion and try others
+            p_zt_x_mean = mean_over_diffusion_positions(p_zt_x, self.diffusion_mask)
             denoised = p_zt_x > 0.9
-            denoised = denoised | ~self.diffusion_mask.bool()
-            self.is_fully_denoised = denoised.all(dim=1)
+            denoised = denoised | ~self.diffusion_mask.bool() | self.is_fully_denoised.unsqueeze(-1)
+            self.is_fully_denoised = denoised.all(dim=-1)
 
             # z_t based on forward distribution # issue: p_zs_x_and_zt_nx is small, not enough time for all positions to unmask (even with more steps, tried 300)
             # p_zs_x_and_zt_x = (alpha_s + beta_pi_s_at_not_m) * (alpha_ts + beta_pi_ts_at_not_m)
@@ -674,12 +691,23 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
             elif self.config.position_sampling == "top_k":
                 # updatable_positions = self.diffusion_mask
                 updatable_positions = self.diffusion_mask & ~denoised
+                ks = torch.ones(updatable_positions.shape[0], device=updatable_positions.device)
+                # ks = torch.where(p_zt_x_mean > 0.3, 4, ks)
+                # ks = torch.where(p_zt_x_mean > 0.6, 2, ks)
+                # ks = torch.where(p_zt_x_mean > 0.8, 1, ks)
                 if self.config.position_metric == "p_denoise":
-                    update_positions = sample_position_top_k_gumbel(p_zs_x_and_zt_nx * updatable_positions, 1, 0) # select positions with top-k probabilities to have a denoising event
+                    update_positions = sample_position_top_variable_k(p_zs_x_and_zt_nx * updatable_positions, ks) # select positions with top-k probabilities to have a denoising event
                 elif self.config.position_metric == "confident_and_p_denoise":
-                    update_positions = sample_position_top_k_gumbel(probs.max(-1).values * p_zs_x_and_zt_nx * updatable_positions, 1, 0)
+                    update_positions = sample_position_top_variable_k(probs.max(-1).values * p_zs_x_and_zt_nx * updatable_positions, ks)
                 elif self.config.position_metric == "confident_and_noisy":
-                    update_positions = sample_position_top_k_gumbel(probs.max(-1).values * (1 - p_zt_x) * updatable_positions, 1, 0)
+                    update_positions = sample_position_top_variable_k(probs.max(-1).values * (1 - p_zt_x) * updatable_positions, ks)
+                # k = 1
+                # if self.config.position_metric == "p_denoise":
+                #     update_positions = sample_position_top_k_gumbel(p_zs_x_and_zt_nx * updatable_positions, k, 0) # select positions with top-k probabilities to have a denoising event
+                # elif self.config.position_metric == "confident_and_p_denoise":
+                #     update_positions = sample_position_top_k_gumbel(probs.max(-1).values * p_zs_x_and_zt_nx * updatable_positions, k, 0)
+                # elif self.config.position_metric == "confident_and_noisy":
+                #     update_positions = sample_position_top_k_gumbel(probs.max(-1).values * (1 - p_zt_x) * updatable_positions, k, 0)
 
             # update selected positions
             if self.config.token_sampling == "categorical":
@@ -705,14 +733,16 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
             uniform_noise_positions = uniform_noise_positions & ~denoised # don't update positions that are currently believed to be denoised
             # print(f"{i}: num denoised positions: {(denoised & self.diffusion_mask).sum()}")
             
-            self.p_zs_x = p_zs_x_and_zt_x + p_zs_x_and_zt_nx
-            if self.config.oracle == "recurrence" or self.config.oracle == "model_and_recurrence":
-                self.p_zs_x = torch.where(update_positions.bool(), probs.gather(-1, next_z_t.unsqueeze(-1)).squeeze(-1), self.p_zs_x)
-            elif self.config.oracle == "model_EMA":
+            if self.config.oracle == "model_EMA":
                 self.p_zs_x = torch.where(update_positions.bool(), probs.gather(-1, next_z_t.unsqueeze(-1)).squeeze(-1), p_zt_x)
-            
+            else:
+                self.p_zs_x = p_zs_x_and_zt_x + p_zs_x_and_zt_nx
+                if self.config.oracle in ["recurrence", "model_and_recurrence"]:
+                    self.p_zs_x = torch.where(update_positions.bool(), probs.gather(-1, next_z_t.unsqueeze(-1)).squeeze(-1), self.p_zs_x)
+                
         if generation_info_handler is not None:
             generation_info_handler.batch_step_history(self.z_t)
+            generation_info_handler.batch_step_logits(logits[..., :self.tokenizer.mask_token_id])
             generation_info_handler.batch_step_marginals(self.z_t, p_zt_x, t, self.tokenizer.mask_token_id)
 
         self.z_t = torch.where(update_positions.bool(), next_z_t, self.z_t)

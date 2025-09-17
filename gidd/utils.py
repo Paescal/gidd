@@ -34,7 +34,8 @@ def get_lr(config, lr, step):
     else:
         raise ValueError(f"Unknown learning rate schedule: {lr_schedule}")
 
-
+def mean_over_diffusion_positions(values, diffusion_mask):
+    return (values * diffusion_mask).sum(-1) / diffusion_mask.sum(-1)
 
 # def get_position_metric(config, tokenizer):
 #     match config.sampling.position_metric:
@@ -199,6 +200,15 @@ def sample_position_top_k_gumbel(metric, k, gumbel_noise_coefficient=0):
         # metric = metric - torch.logsumexp(metric, dim=-1, keepdim=True) + gumbel_noise * gumbel_noise_coefficient * metric_is_non_zero_mask
     chosen_positions_indices = torch.topk(metric, k, dim=-1).indices
     top_k_mask = torch.zeros_like(metric, dtype=bool).scatter_(-1, chosen_positions_indices, True)
+    top_k_mask = top_k_mask & metric_is_non_zero_mask
+    return top_k_mask
+
+@torch.no_grad()
+def sample_position_top_variable_k(metric, ks):
+    metric_is_non_zero_mask = metric != 0
+    sorted_indices = torch.argsort(metric, dim=-1, descending=True)
+    sorted_position = torch.arange(metric.shape[-1], device=metric.device).unsqueeze(0).expand_as(metric)
+    top_k_mask = torch.zeros_like(metric, dtype=bool).scatter_(-1, sorted_indices, sorted_position < ks.unsqueeze(-1))
     top_k_mask = top_k_mask & metric_is_non_zero_mask
     return top_k_mask
 

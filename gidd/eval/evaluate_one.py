@@ -56,7 +56,7 @@ def main(args, sampling_config):
     with tqdm.tqdm(total=args.num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
         with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
             data_loader = iter(data_loader)
-            generation_info_handler = GenerationInfoHandler(info=["history", "marginals", "change_events"], max_seq_len=ckpt_config.model.max_seq_len, sampling_config_dict=namespace_to_dict(sampling_config), noise_schedule=noise_schedule)
+            generation_info_handler = GenerationInfoHandler(info=["history", "logits", "marginals", "change_events"], max_seq_len=ckpt_config.model.max_seq_len, sampling_config_dict=namespace_to_dict(sampling_config), noise_schedule=noise_schedule)
             for i in range(0, args.num_samples, args.batch_size):
                 batch = next(data_loader)
                 bs = min(args.batch_size, args.num_samples - i)
@@ -64,14 +64,18 @@ def main(args, sampling_config):
                 diffusion_mask = batch['diffusion_mask']
                 solutions_tokenized = batch['input_ids']
                 if ckpt_config.training.use_diffusion_mask:
+                    if i > 0:
+                        generation_info_handler.collect_history = False
+                        generation_info_handler.collect_logits = False
+                        # generation_info_handler.collect_marginals = False
+                    if i >= 2 * args.batch_size:
+                        generation_info_handler.collect_change_events = False
+
                     if i == 0:
                         samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, generation_info_handler=generation_info_handler, keep_history=True)
                         # samples, history_of_first_batch = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, generation_info_handler=generation_info_handler, keep_history=True)
                         # history_solution = solutions_tokenized
                     else:
-                        generation_info_handler.collect_history = False
-                        generation_info_handler.collect_marginals = False
-                        generation_info_handler.collect_change_events = False
                         samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, generation_info_handler=generation_info_handler, keep_history=False)
 
                 if ckpt_config.model.puzzle_conditioning == 'in_context':
@@ -91,6 +95,7 @@ def main(args, sampling_config):
     print(f"not_fully_unmasked={not_fully_unmasked:.4f}")
     
     generation_info_handler.collect_history = True
+    generation_info_handler.collect_logits = True
     generation_info_handler.collect_marginals = True
     generation_info_handler.collect_change_events = True
     generation_info_handler.save_info(f"/local/home/prisold/gidd/outputs/generation_info/combination_{args.combinations_row}")

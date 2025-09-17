@@ -16,6 +16,16 @@ def load_history(out_dir: str, map_location: str = "cpu") -> torch.Tensor:
     obj = torch.load(path, map_location=map_location, weights_only=True)
     return obj["history"]
 
+def save_logits(logits: torch.Tensor, out_dir: str) -> str:
+    path = os.path.join(out_dir, "logits.pt")
+    torch.save({"logits": logits}, path)
+    return path
+
+def load_logits(out_dir: str, map_location: str = "cpu") -> torch.Tensor:
+    path = os.path.join(out_dir, "logits.pt")
+    obj = torch.load(path, map_location=map_location, weights_only=True)
+    return obj["logits"]
+
 def save_marginals(marginals: Dict[str, torch.Tensor], out_dir: str) -> str:
     path = os.path.join(out_dir, "marginals.pt")
     # store tensors on CPU for portability
@@ -45,6 +55,7 @@ def save_change_events_table(change_events: list[list[dict]], out_dir: str) -> s
                     "old_value": ev["old_value"],
                     "new_value": ev["new_value"],
                     "event_type": ev["event_type"],
+                    "old_value_confidence": ev.get("old_value_confidence", None),
                     "model_confidence": ev["model_confidence"],
                     "model_confidence_after": ev.get("model_confidence_after", None),
                 })
