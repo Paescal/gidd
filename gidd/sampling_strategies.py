@@ -509,6 +509,8 @@ class Gidd_independent_steps(SamplingStrategy):
         self.ts = torch.linspace(0, 1, self.num_denoising_steps + 1, device=device).unsqueeze(-1)
         self.ts = (1 - 2 * self.t_eps) * self.ts + self.t_eps
         self.z_t = self.initial_z_t.clone()
+        self.p_zs_x = torch.zeros_like(self.initial_z_t, dtype=torch.float, device=device)
+        self.p_zs_x_mean_EMA = torch.zeros((self.initial_z_t.shape[0]), dtype=torch.float, device=device)
         self.is_fully_unmasked = torch.zeros(self.initial_z_t.shape[0], dtype=torch.bool, device=device)
         self.has_self_corrected = False
     
@@ -522,6 +524,17 @@ class Gidd_independent_steps(SamplingStrategy):
         else:
             return self.self_correction is None or self.has_self_corrected
         
+    def infer_time_step(self):
+        p_zs_x_mean = mean_over_diffusion_positions(self.p_zs_x, self.diffusion_mask)
+        p_zs_x_mean_EMA_weight = 0.8
+        self.p_zs_x_mean_EMA = p_zs_x_mean_EMA_weight * self.p_zs_x_mean_EMA + (1 - p_zs_x_mean_EMA_weight) * p_zs_x_mean
+        current_ts = 1 - self.p_zs_x_mean_EMA.unsqueeze(-1).expand(-1, self.ts.shape[0])
+        current_ts = (1 - 2 * self.t_eps) * current_ts + self.t_eps
+        current_ts_indices = (current_ts - self.ts.squeeze(-1)).abs().argmin(-1)
+        t = self.ts[current_ts_indices].squeeze(-1)
+        s = self.ts[torch.maximum(current_ts_indices - 1, torch.zeros_like(current_ts_indices))].squeeze(-1)
+        return t, s
+    
     def step(self, i, generation_info_handler):
         if i < self.num_denoising_steps:
             self.is_fully_unmasked = (self.z_t[:, -self.max_length:] != self.tokenizer.mask_token_id).all(dim=1)
@@ -534,17 +547,9 @@ class Gidd_independent_steps(SamplingStrategy):
             if time_steps == 'fixed':
                 t = self.ts[self.num_denoising_steps - 1 - i]
                 s = self.ts[max(0, self.num_denoising_steps - 2 - i)]
-                logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
             elif time_steps == 'inferred':
-                p_zs_x_mean = mean_over_diffusion_positions(self.p_zs_x, self.diffusion_mask)
-                p_zs_x_mean_EMA_weight = 0.8
-                self.p_zs_x_mean_EMA = p_zs_x_mean_EMA_weight * self.p_zs_x_mean_EMA + (1 - p_zs_x_mean_EMA_weight) * p_zs_x_mean
-                current_ts = 1 - self.p_zs_x_mean_EMA.unsqueeze(-1).expand(-1, self.ts.shape[0])
-                current_ts = (1 - 2 * self.t_eps) * current_ts + self.t_eps
-                current_ts_indices = (current_ts - self.ts.squeeze(-1)).abs().argmin(-1)
-                t = self.ts[current_ts_indices].squeeze(-1)
-                s = self.ts[torch.maximum(current_ts_indices - 1, torch.zeros_like(current_ts_indices))].squeeze(-1)
-                logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
+                t, s = self.infer_time_step()
+            logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
             logits[..., self.tokenizer.mask_token_id:] = -1e6
             probs = logits.softmax(-1)
 
@@ -559,6 +564,8 @@ class Gidd_independent_steps(SamplingStrategy):
                 generation_info_handler.batch_step_marginals(self.z_t, probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1), s, self.tokenizer.mask_token_id)
 
             self.z_t = torch.where(update_positions.bool(), next_z_t, self.z_t)
+
+            self.p_zs_x = probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
 
             if generation_info_handler is not None:
                 if i == self.num_denoising_steps - 1:
@@ -661,18 +668,18 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
 
     @torch.no_grad()
     def initialize(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device):
-        # super().initialize(initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps + num_self_correction_steps, 0, max_length, device)
+        # State which remains constant throughout sampling
         super().initialize(initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device)
         self.ts = torch.linspace(0, 1, self.num_denoising_steps + 1, device=device).unsqueeze(-1)
         self.ts = (1 - 2 * self.t_eps) * self.ts + self.t_eps
-        self.z_t = self.initial_z_t.clone()
-        self.p_zs_x = torch.zeros_like(self.initial_z_t, dtype=torch.float, device=device)
-        self.is_fully_denoised = torch.zeros(self.initial_z_t.shape[0], dtype=torch.bool, device=device)
         self.not_mask_token_id_tensor = torch.ones((1, 1), dtype=initial_z_t.dtype, device=device) * self.noise_schedule.not_mask_id
         self.mask_token_id_tensor = torch.ones((1, 1), dtype=initial_z_t.dtype, device=device) * self.tokenizer.mask_token_id
+        # State which is updated throughout sampling
+        self.z_t = self.initial_z_t.clone()
+        self.p_zs_x = torch.zeros_like(self.initial_z_t, dtype=torch.float, device=device)
         self.p_zs_x_mean_EMA = torch.zeros((self.initial_z_t.shape[0]), dtype=torch.float, device=device)
+        self.is_fully_denoised = torch.zeros(self.initial_z_t.shape[0], dtype=torch.bool, device=device)
         self.has_self_corrected = False
-        # self.cum_p_not_denoised = 1.0
 
     def stopping_criterion(self, i, generation_info_handler):
         if i < self.num_denoising_steps:
@@ -683,7 +690,18 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
         else:
             return self.self_correction is None or self.has_self_corrected
     
-    def step(self, i, generation_info_handler):
+    def infer_time_step(self):
+        p_zs_x_mean = mean_over_diffusion_positions(self.p_zs_x, self.diffusion_mask)
+        p_zs_x_mean_EMA_weight = 0.8
+        self.p_zs_x_mean_EMA = p_zs_x_mean_EMA_weight * self.p_zs_x_mean_EMA + (1 - p_zs_x_mean_EMA_weight) * p_zs_x_mean
+        current_ts = 1 - self.p_zs_x_mean_EMA.unsqueeze(-1).expand(-1, self.ts.shape[0])
+        current_ts = (1 - 2 * self.t_eps) * current_ts + self.t_eps
+        current_ts_indices = (current_ts - self.ts.squeeze(-1)).abs().argmin(-1)
+        t = self.ts[current_ts_indices].squeeze(-1)
+        s = self.ts[torch.maximum(current_ts_indices - 1, torch.zeros_like(current_ts_indices))].squeeze(-1)
+        return t, s
+
+    def step(self, i, generation_info_handler, blocked_logits_mask=None):
         if i < self.num_denoising_steps:
             if self.is_fully_denoised.all():
                 return
@@ -694,19 +712,13 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
             if time_steps == 'fixed':
                 t = self.ts[self.num_denoising_steps - 1 - i]
                 s = self.ts[max(0, self.num_denoising_steps - 2 - i)]
-                logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
             elif time_steps == 'inferred':
-                p_zs_x_mean = mean_over_diffusion_positions(self.p_zs_x, self.diffusion_mask)
-                p_zs_x_mean_EMA_weight = 0.8
-                self.p_zs_x_mean_EMA = p_zs_x_mean_EMA_weight * self.p_zs_x_mean_EMA + (1 - p_zs_x_mean_EMA_weight) * p_zs_x_mean
-                current_ts = 1 - self.p_zs_x_mean_EMA.unsqueeze(-1).expand(-1, self.ts.shape[0])
-                current_ts = (1 - 2 * self.t_eps) * current_ts + self.t_eps
-                current_ts_indices = (current_ts - self.ts.squeeze(-1)).abs().argmin(-1)
-                t = self.ts[current_ts_indices].squeeze(-1)
-                s = self.ts[torch.maximum(current_ts_indices - 1, torch.zeros_like(current_ts_indices))].squeeze(-1)
-                logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
+                t, s = self.infer_time_step()
+            logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
             logits[..., self.tokenizer.mask_token_id:] = -1e6
             probs = logits.softmax(-1)
+            if blocked_logits_mask is not None:
+                probs[..., :self.tokenizer.mask_token_id] = torch.where(blocked_logits_mask, 0, probs[..., :self.tokenizer.mask_token_id])
             
             if i == self.num_denoising_steps - 1:
                 update_positions = (self.z_t == self.tokenizer.mask_token_id) * self.diffusion_mask
@@ -930,3 +942,62 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
             self.has_self_corrected = True
             if generation_info_handler is not None:
                 generation_info_handler.batch_step_history(self.z_t)
+    
+    def get_state(self):
+        return {
+            'z_t': self.z_t.clone(),
+            'p_zs_x': self.p_zs_x.clone(),
+            'p_zs_x_mean_EMA': self.p_zs_x_mean_EMA.clone(),
+            'is_fully_denoised': self.is_fully_denoised.clone(),
+            'has_self_corrected': self.has_self_corrected
+        }
+    
+    def set_state(self, beam):
+        self.z_t = beam['z_t'].clone()
+        self.p_zs_x = beam['p_zs_x'].clone()
+        self.p_zs_x_mean_EMA = beam['p_zs_x_mean_EMA'].clone()
+        self.is_fully_denoised = beam['is_fully_denoised'].clone()
+        self.has_self_corrected = beam['has_self_corrected']
+
+    def branch_step(self, beam, branching_factor):
+        new_beams = []
+        blocked_logits_mask = torch.zeros((beam['z_t'].shape[0], beam['z_t'].shape[1], self.tokenizer.mask_token_id), dtype=torch.bool, device=self.device)
+        original_z_t = beam['z_t']
+        for _ in range(branching_factor):
+            self.set_state(beam)
+            self.step(beam['step'], None, blocked_logits_mask=blocked_logits_mask)
+            new_beam = self.get_state()
+            new_beams.append(new_beam)
+            # update blocked_logits_mask
+            new_z_t = new_beam['z_t']
+            updated_positions = (original_z_t != new_z_t)
+            for sample_idx in range(original_z_t.shape[0]):
+                for position_idx in range(original_z_t.shape[1]):
+                    if updated_positions[sample_idx, position_idx]:
+                        new_value = new_z_t[sample_idx, position_idx].item()
+                        blocked_logits_mask[sample_idx, position_idx, new_value] = 1
+        return new_beams
+
+    def beam_score(self, beam): # shape of z_t: (batch_size=1, seq_len)
+        self.set_state(beam)
+        infer_t = True
+        if infer_t:
+            t, _ = self.infer_time_step()
+        else:
+            t = self.ts[0]
+        logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
+        logits[..., self.tokenizer.mask_token_id:] = -1e6
+        probs = logits.softmax(-1)
+        p_zt_x = probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
+        p_zt_x_mean = mean_over_diffusion_positions(p_zt_x, self.diffusion_mask)
+        return p_zt_x_mean.squeeze(0).item()
+     
+    def beam_score_final(self, beam): # shape of z_t: (batch_size=1, seq_len)
+        z_t = beam['z_t']
+        logits = self.model(z_t, self.ts[0], puzzle_conditioning=self.puzzle_conditioning)
+        logits[..., self.tokenizer.mask_token_id:] = -1e6
+        probs = logits.softmax(-1)
+        p_zt_x = probs.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
+        p_zt_x = torch.where(self.diffusion_mask.to(dtype=bool), p_zt_x, 1)
+        min_p_zt_x = torch.min(p_zt_x, dim=-1).values
+        return min_p_zt_x.squeeze(0).item()

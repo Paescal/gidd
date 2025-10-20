@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import tqdm.auto as tqdm
 
 from gidd.diffusion_process import NoiseSchedule
-from gidd.utils import sample_categorical
+from gidd.utils import deduplicate, sample_categorical
 from gidd.sampling_strategies import get_sampling_strategy, get_sampling_strategy_class
 from gidd.self_correction_strategies import self_correction_original, self_correction_original_oscillation_prevention, self_correction_keep_where_confident
 from gidd.eval.generation_info import GenerationInfoHandler
@@ -345,7 +345,89 @@ class GiddSampler_new(Sampler):
         #     return self.sampling_strategy.z_t, torch.stack(history, dim=0).permute(1, 0, 2) # (num_denoising_steps + self_correction_steps + 1, bs, max_length) -> (bs, num_denoising_steps + self_correction_steps + 1, max_length)
         # else:
         #     return self.sampling_strategy.z_t, []
+    
+    def _do_beam_search(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device, generation_info_handler:GenerationInfoHandler=None):
+        # while beams exist with denoising_progress < max_denoising progress (=not done)
+        #   while beams exist with steps_before_pruning > 0
+        #       progress them by one step (branch by branching_factor)
+        #   deduplicate beams
+        #   once all beams have steps_before_pruning == 0:
+        #   compute min_progress = min(denoising_progress)
+        #   select the beams with denoising_progress == min_progress
+        #   prune selected beams to top pruning_num_beams beams
+        #   reset steps_before_pruning for pruned beams
+
+        # Current assumptions: batch size == 1
         
+        steps_before_pruning = 1
+        pruning_num_beams = 2
+        branching_factor = 2
+        initiate_beam_search_after_progress = 0.5 # start beam search only after this fraction of tokens have been unmasked
+        progress_threshold_to_branch = int((torch.sum(diffusion_mask).item()) * initiate_beam_search_after_progress)
+
+        beams = []
+        complete_beams = []
+        self.sampling_strategy.initialize(initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device)
+        initial_beam = self.sampling_strategy.get_state()
+        initial_beam['steps_before_pruning'] = steps_before_pruning
+        initial_beam['denoising_progress'] = 0 # number of tokens unmasked?
+        initial_beam['step'] = 0
+        beams.append(initial_beam)
+        
+        final_denoising_progress = torch.sum(diffusion_mask).item()
+        beam_search_complete = False
+        while not beam_search_complete:
+            next_beams = []
+            beam_search_complete = True
+            ready_for_pruning = True
+            for beam in beams:
+                if beam['denoising_progress'] == final_denoising_progress:
+                    complete_beams.append(beam)
+                else:
+                    beam_search_complete = False
+                    if beam['steps_before_pruning'] > 0:
+                        ready_for_pruning = False
+                        if beam['denoising_progress'] >= progress_threshold_to_branch:
+                            current_branching_factor = branching_factor
+                        else:
+                            current_branching_factor = 1
+                        new_beams = self.sampling_strategy.branch_step(beam, current_branching_factor)
+                        for new_beam in new_beams:
+                            new_beam['steps_before_pruning'] = beam['steps_before_pruning'] - 1
+                            new_beam['denoising_progress'] = torch.sum((new_beam['z_t'] != self.tokenizer.mask_token_id) * diffusion_mask).item(),
+                            new_beam['step'] = beam['step'] + 1
+                        next_beams = next_beams + new_beams
+                    else:
+                        next_beams.append(beam)
+            next_beams = deduplicate(next_beams)
+            if ready_for_pruning and not beam_search_complete:
+                # perform pruning
+                min_progress = min([beam['denoising_progress'] for beam in next_beams])
+                beams_to_prune = [beam for beam in next_beams if beam['denoising_progress'] == min_progress]
+                # compute scores for beams to prune
+                beam_scores = []
+                for beam in beams_to_prune:
+                    score = self.sampling_strategy.beam_score(beam)
+                    beam_scores.append(score)
+                # select top pruning_num_beams beams
+                topk_indices = torch.topk(torch.tensor(beam_scores), k=min(pruning_num_beams, len(beam_scores))).indices.tolist()
+                pruned_beams = [beams_to_prune[i] for i in topk_indices]
+                # reset steps_before_pruning
+                for beam in pruned_beams:
+                    beam['steps_before_pruning'] = steps_before_pruning
+                # add pruned beams back to next_beams
+                next_beams = [beam for beam in next_beams if beam['denoising_progress'] != min_progress] + pruned_beams
+            beams = next_beams
+        # select best complete beam
+        complete_beams = deduplicate(complete_beams)
+        best_beam = None
+        best_score = -float('inf')
+        for beam in complete_beams:
+            score = self.sampling_strategy.beam_score_final(beam) # may want to use a special score function for completed beams (e.g. min confidence over all tokens)
+            if score > best_score:
+                best_score = score
+                best_beam = beam
+        return best_beam['z_t']
 
 class MDLMSampler(Sampler):
     class DenoisingStep(nn.Module):

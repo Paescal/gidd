@@ -313,6 +313,15 @@ def sample_token_MDM_categorical(probs, tokenizer):
 #     else:
 #         return chosen_indices
 
+def deduplicate(beams):
+    unique_beam_dict = {}
+    for beam in beams:
+        beam_key = tuple(beam['z_t'].cpu().numpy().flatten().tolist())
+        if beam_key not in unique_beam_dict:
+            unique_beam_dict[beam_key] = beam
+    return list(unique_beam_dict.values())
+
+
 @torch.no_grad()
 def correct_cells_score(samples_tokenized, solutions_tokenized):
     correct_cells = (samples_tokenized == solutions_tokenized).to(int)
