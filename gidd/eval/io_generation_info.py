@@ -26,6 +26,16 @@ def load_logits(out_dir: str, map_location: str = "cpu") -> torch.Tensor:
     obj = torch.load(path, map_location=map_location, weights_only=True)
     return obj["logits"]
 
+def save_confidence_t_0(confidence_t_0: torch.Tensor, out_dir: str) -> str:
+    path = os.path.join(out_dir, "confidence_t_0.pt")
+    torch.save({"confidence_t_0": confidence_t_0}, path)
+    return path
+
+def load_confidence_t_0(out_dir: str, map_location: str = "cpu") -> torch.Tensor:
+    path = os.path.join(out_dir, "confidence_t_0.pt")
+    obj = torch.load(path, map_location=map_location, weights_only=True)
+    return obj["confidence_t_0"]
+
 def save_marginals(marginals: Dict[str, torch.Tensor], out_dir: str) -> str:
     path = os.path.join(out_dir, "marginals.pt")
     # store tensors on CPU for portability
@@ -98,6 +108,16 @@ def load_change_events_table(out_dir: str):
         with open(jsonl, "r") as f:
             return [json.loads(line) for line in f]
     raise FileNotFoundError("No change events file found in out_dir.")
+
+def save_forward_calls(forward_calls: Dict[str, Any], out_dir: str) -> str:
+    path = os.path.join(out_dir, "forward_calls.pt")
+    torch.save(forward_calls, path)
+    return path
+
+def load_forward_calls(out_dir: str, map_location: str = "cpu") -> Dict[str, Any]:
+    path = os.path.join(out_dir, "forward_calls.pt")
+    obj = torch.load(path, map_location=map_location, weights_only=True)
+    return obj
 
 def save_meta(meta: Dict[str, Any], out_dir: str) -> str:
     path = os.path.join(out_dir, "meta.json")

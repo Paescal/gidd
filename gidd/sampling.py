@@ -332,8 +332,8 @@ class GiddSampler_new(Sampler):
             generation_info_handler.batch_initialize(initial_z_t, diffusion_mask, solution, device)
         # history = [initial_z_t.clone().to(device, non_blocking=True)] if collect_history else None
         for i in tqdm.trange(num_denoising_steps + num_self_correction_steps, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
-            if self.sampling_strategy.stopping_criterion(i):
-                print(f"Stopping criterion met at step {i}")
+            if self.sampling_strategy.stopping_criterion(i, generation_info_handler):
+                # print(f"Stopping criterion met at step {i}")
                 break
             self.sampling_strategy.step(i, generation_info_handler)
             # if collect_history:
@@ -366,7 +366,7 @@ class MDLMSampler(Sampler):
             sigma = -torch.log1p(-(1 - eps) * t.clip(eps, 1))
             return dsigma, sigma
 
-        def forward(self, z_t, t, tm1, diffusion_mask, i=None, eps=1e-4):
+        def forward(self, z_t, t, tm1, diffusion_mask, i=None, eps=1e-4, generation_info_handler=None):
             logits = self.model(z_t, t)
             logits[..., self.mask_id] = -1e6
 
@@ -380,6 +380,8 @@ class MDLMSampler(Sampler):
                 update_positions = update_positions * update_positions_from_strategy
 
             update_positions = update_positions * diffusion_mask
+            if generation_info_handler is not None:
+                generation_info_handler.batch_step_logits(logits[..., :self.mask_id])
             return torch.where(update_positions.bool(), z_tm1, z_t)
 
     def __init__(self, config, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
@@ -406,17 +408,26 @@ class MDLMSampler(Sampler):
 
         z_t = initial_z_t.clone()
 
-        history = [initial_z_t.clone()] if keep_history else None
+        # history = [initial_z_t.clone()] if keep_history else None
+
+        if generation_info_handler is not None:
+            generation_info_handler.batch_initialize(initial_z_t, diffusion_mask, solution, device)
 
         for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress):
-            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=diffusion_mask, i=i, eps=self.t_eps).clone()
-            if keep_history:
-                history.append(z_t.clone())
+            if generation_info_handler is not None:
+                generation_info_handler.batch_step_history(z_t)
+            z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=diffusion_mask, i=i, eps=self.t_eps, generation_info_handler=generation_info_handler).clone()
+            # if keep_history:
+            #     history.append(z_t.clone())
+        if generation_info_handler is not None:
+            generation_info_handler.batch_step_history(z_t)
+            generation_info_handler.batch_finalize()
         
-        if keep_history:
-            return z_t, torch.stack(history, dim=0).permute(1, 0, 2)
-        else:
-            return z_t, None
+        # if keep_history:
+        #     return z_t, torch.stack(history, dim=0).permute(1, 0, 2)
+        # else:
+        #     return z_t, None
+        return z_t
 
 
 class AutoregressiveSampler(Sampler):

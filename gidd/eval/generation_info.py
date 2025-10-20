@@ -17,6 +17,9 @@ class GenerationInfoHandler:
         if "logits" in info:
             self.collect_logits = True
             self.logits = None
+        if "confidence_t_0" in info:
+            self.collect_confidence_t_0 = True
+            self.confidence_t_0 = None
         if "marginals" in info:
             self.collect_marginals = True
             self.true_denoised_fraction = None # averaged over samples
@@ -33,6 +36,10 @@ class GenerationInfoHandler:
         if "change_events" in info:
             self.collect_change_events = True
             self.change_events = None # list of lists of dicts
+        if "forward_calls" in info:
+            self.collect_forward_calls = True
+            self.forward_calls_by_sample = None
+            self.forward_calls_by_batch = None
 
     def batch_initialize(self, initial_z_t, diffusion_mask, solution, device):
         self.batch_size = initial_z_t.shape[0]
@@ -44,6 +51,8 @@ class GenerationInfoHandler:
             self.batch_history = []
         if getattr(self, "collect_logits", False):
             self.batch_logits = []
+        if getattr(self, "collect_confidence_t_0", False):
+            self.batch_confidence_t_0 = []
         if getattr(self, "collect_marginals", False):
             self.batch_true_denoised_fraction = []
             self.batch_denoised_fraction = []
@@ -57,18 +66,24 @@ class GenerationInfoHandler:
             self.batch_expected_cell_accuracy = []
             self.batch_total_accuracy = []
         if getattr(self, "collect_change_events", False):
-            self.old_z_t = initial_z_t.clone().to(device=device, non_blocking=True)
+            self.old_z_t = initial_z_t.detach().to(device=device, non_blocking=True)
             self.batch_change_events_incomplete = [[] for _ in range(self.batch_size)]
             self.batch_change_events = [[] for _ in range(self.batch_size)]
+        if getattr(self, "collect_forward_calls", False):
+            self.batch_forward_calls_by_sample = torch.zeros(self.batch_size, dtype=torch.int, device=device)
             
     
     def batch_step_history(self, z_t):
         if getattr(self, "collect_history", False):
-            self.batch_history.append(z_t.clone()[:, -self.max_seq_len:])
+            self.batch_history.append(z_t.detach()[:, -self.max_seq_len:])
 
     def batch_step_logits(self, logits):
         if getattr(self, "collect_logits", False):
-            self.batch_logits.append(logits.clone()[:, -self.max_seq_len:, :])
+            self.batch_logits.append(logits.detach()[:, -self.max_seq_len:, :])
+
+    def batch_step_confidence_t_0(self, confidence_t_0):
+        if getattr(self, "collect_confidence_t_0", False):
+            self.batch_confidence_t_0.append(confidence_t_0.detach()[:, -self.max_seq_len:, :])
 
     def batch_step_marginals(self, z_t, p_zt_x, t, mask_token_id):
         if getattr(self, "collect_marginals", False):
@@ -93,6 +108,10 @@ class GenerationInfoHandler:
             self.batch_cell_accuracy.append(cell_accuracy_by_sample)
             self.batch_expected_cell_accuracy.append(expected_cell_accuracy)
             self.batch_total_accuracy.append(total_accuracy_by_sample.sum().item())
+    
+    def batch_step_marginals_final(self, z_t):
+        cell_accuracy_by_sample = ((z_t == self.batch_solution) * self.diffusion_mask).sum(dim=-1) / self.num_diffusion_positions_by_sample
+        self.batch_cell_accuracy.append(cell_accuracy_by_sample)
 
     def batch_step_change_events(self, step, new_z_t, probs, mask_token_id):
         def get_change_event_type(old_value, new_value, true_value, mask_token_id):
@@ -106,13 +125,17 @@ class GenerationInfoHandler:
                 return "uniform_to_denoised"
             elif old_is_uniform_token and new_is_uniform_token:
                 return "uniform_to_uniform"
+            elif old_is_uniform_token and new_value == mask_token_id:
+                return "uniform_to_mask"
             elif old_value == true_value and new_is_uniform_token:
                 return "denoised_to_uniform"
+            elif old_value == true_value and new_value == mask_token_id:
+                return "denoised_to_mask"
             else:
                 raise ValueError(f"Unexpected change from {old_value} to {new_value} (true value: {true_value})")
 
         if getattr(self, "collect_change_events", False):
-            new_z_t = new_z_t.clone().detach()
+            new_z_t = new_z_t.detach()
             has_changed = (new_z_t != self.old_z_t)
             change_indices_rows, change_indices_columns = has_changed.nonzero(as_tuple=True)
             old_values = self.old_z_t[change_indices_rows, change_indices_columns]
@@ -141,6 +164,10 @@ class GenerationInfoHandler:
                 })
 
             self.old_z_t = new_z_t
+    
+    def batch_step_forward_calls(self, is_fully_denoised):
+        if getattr(self, "collect_forward_calls", False):
+            self.batch_forward_calls_by_sample += (~is_fully_denoised).to(torch.int)
 
     def batch_finalize(self):
         self.num_samples += self.batch_size
@@ -161,6 +188,14 @@ class GenerationInfoHandler:
                 if self.logits.shape[1] != self.batch_logits.shape[1] or self.logits.shape[2] != self.batch_logits.shape[2] or self.logits.shape[3] != self.batch_logits.shape[3]:
                     raise ValueError("Inconsistent logits shapes")
                 self.logits = torch.cat([self.logits, self.batch_logits], dim=0)
+        if getattr(self, "collect_confidence_t_0", False):
+            self.batch_confidence_t_0 = torch.stack(self.batch_confidence_t_0, dim=1)
+            if self.confidence_t_0 is None:
+                self.confidence_t_0 = self.batch_confidence_t_0
+            else:
+                if self.confidence_t_0.shape[1] != self.batch_confidence_t_0.shape[1] or self.confidence_t_0.shape[2] != self.batch_confidence_t_0.shape[2]:
+                    raise ValueError("Inconsistent confidence_t_0 shapes")
+                self.confidence_t_0 = torch.cat([self.confidence_t_0, self.batch_confidence_t_0], dim=0)
         if getattr(self, "collect_marginals", False):
             self.batch_true_denoised_fraction = torch.tensor(self.batch_true_denoised_fraction)
             self.batch_denoised_fraction = torch.tensor(self.batch_denoised_fraction)
@@ -200,6 +235,13 @@ class GenerationInfoHandler:
                 self.change_events = self.batch_change_events
             else:
                 self.change_events.extend(self.batch_change_events)
+        if getattr(self, "collect_forward_calls", False):
+            if self.forward_calls_by_sample is None:
+                self.forward_calls_by_sample = self.batch_forward_calls_by_sample.cpu()
+                self.forward_calls_by_batch = [torch.max(self.batch_forward_calls_by_sample).item()]
+            else:
+                self.forward_calls_by_sample = torch.cat([self.forward_calls_by_sample, self.batch_forward_calls_by_sample.cpu()], dim=0)
+                self.forward_calls_by_batch.append(torch.max(self.batch_forward_calls_by_sample).item())
 
     def get_history(self):
         if getattr(self, "collect_history", False):
@@ -212,6 +254,12 @@ class GenerationInfoHandler:
             return self.logits # shape (num_samples, num_denoising_steps, seq_len, vocab_size)
         else:
             raise ValueError("Logits were not collected")
+    
+    def get_confidence_t_0(self):
+        if getattr(self, "collect_confidence_t_0", False):
+            return self.confidence_t_0 # shape (num_samples, 1, seq_len, vocab_size)
+        else:
+            raise ValueError("Confidence at t=0 was not collected")
 
     def get_marginals(self):
         if getattr(self, "collect_marginals", False):
@@ -236,6 +284,15 @@ class GenerationInfoHandler:
             return self.change_events # list of num_samples lists, each containing num_changes change events, each change event is a dict
         else:
             raise ValueError("Change events were not collected")
+    
+    def get_forward_calls(self):
+        if getattr(self, "collect_forward_calls", False):
+            return {
+                "forward_calls_by_sample": self.forward_calls_by_sample, # shape (num_samples)
+                "forward_calls_by_batch": torch.tensor(self.forward_calls_by_batch), # shape (num_batches)
+            }
+        else:
+            raise ValueError("Forward calls were not collected")
 
     def print_info(self):
         if getattr(self, "collect_history", False):
@@ -252,7 +309,7 @@ class GenerationInfoHandler:
         Saves collected data to `out_dir` with a stable schema.
         """
         from io_generation_info import (
-            _ensure_dir, save_meta, save_history, save_logits, save_marginals, save_change_events_table
+            _ensure_dir, save_meta, save_history, save_logits, save_confidence_t_0, save_marginals, save_change_events_table, save_forward_calls
         )
         _ensure_dir(out_dir)
 
@@ -263,8 +320,10 @@ class GenerationInfoHandler:
             "max_seq_len": getattr(self, "max_seq_len", None),
             "collect_history": getattr(self, "collect_history", False),
             "collect_logits": getattr(self, "collect_logits", False),
+            "collect_confidence_t_0": getattr(self, "collect_confidence_t_0", False),
             "collect_marginals": getattr(self, "collect_marginals", False),
             "collect_change_events": getattr(self, "collect_change_events", False),
+            "collect_forward_calls": getattr(self, "collect_forward_calls", False),
         })
         meta.update(self.sampling_config_dict)
 
@@ -277,6 +336,11 @@ class GenerationInfoHandler:
             logits = self.get_logits().detach().cpu()
             meta["logits_shape"] = list(logits.shape)
             save_logits(logits, out_dir)
+        
+        if getattr(self, "collect_confidence_t_0", False):
+            confidence_t_0 = self.get_confidence_t_0().detach().cpu()
+            meta["confidence_t_0_shape"] = list(confidence_t_0.shape)
+            save_confidence_t_0(confidence_t_0, out_dir)
 
         if getattr(self, "collect_marginals", False):
             marginals = self.get_marginals()
@@ -288,6 +352,9 @@ class GenerationInfoHandler:
 
         if getattr(self, "collect_change_events", False):
             save_change_events_table(self.get_change_events(), out_dir)
+        
+        if getattr(self, "collect_forward_calls", False):
+            save_forward_calls(self.get_forward_calls(), out_dir)
 
         save_meta(meta, out_dir)
 
@@ -296,11 +363,13 @@ class GenerationInfoHandler:
         """
         Convenience loader that returns (meta, history, marginals, change_events_df_or_list)
         """
-        from io_generation_info import load_meta, load_history, load_logits, load_marginals, load_change_events_table
+        from io_generation_info import load_meta, load_history, load_logits, load_confidence_t_0, load_marginals, load_change_events_table, load_forward_calls
         meta = load_meta(out_dir)
         history = load_history(out_dir, map_location) if meta.get("collect_history") else None
         logits = load_logits(out_dir, map_location) if meta.get("collect_logits") else None
+        confidence_t_0 = load_confidence_t_0(out_dir, map_location) if meta.get("collect_confidence_t_0") else None
         marginals = load_marginals(out_dir, map_location) if meta.get("collect_marginals") else None
         # may return pandas.DataFrame or list of dicts depending on availability
         change_events_table = load_change_events_table(out_dir) if meta.get("collect_change_events") else None
-        return meta, history, logits, marginals, change_events_table
+        forward_calls = load_forward_calls(out_dir, map_location) if meta.get("collect_forward_calls") else None
+        return meta, history, logits, confidence_t_0, marginals, change_events_table, forward_calls

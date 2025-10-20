@@ -24,10 +24,10 @@ checkpoints=(
     # "2025-06-01/17-31-45/checkpoints/latest/ gidd 0"
     # "checkpoints/mdlm/50_epochs mdlm -"
     # "checkpoints/mdlm/100_epochs mdlm -"
-    # "checkpoints/mdlm/300_epochs mdlm -"
+    "checkpoints/mdlm/300_epochs mdlm -"
     # "checkpoints/gidd_0/50_epochs gidd 0"
     # "checkpoints/gidd_0/100_epochs gidd 0"
-    # "checkpoints/gidd_0/300_epochs gidd 0"
+    "checkpoints/gidd_0/300_epochs gidd 0"
     # "checkpoints/gidd_0_2/50_epochs gidd 0.2"
     # "checkpoints/gidd_0_2/100_epochs gidd 0.2"
     "checkpoints/gidd_0_2/300_epochs gidd 0.2"
@@ -37,12 +37,27 @@ datasets=(
     "hard"
 )
 nums_denoising_steps=(
+    # "5"
+    # "10"
+    # "20"
+    # "30"
+    # "40"
+    # "50"
+    # "60"
+    # "70"
+    # "80"
+    # "90"
+    # "100"
+    # "150"
+    # "200"
+    # "300"
     "81"
     # "128"
 )
 nums_self_correction_steps=(
-    "0"
-    # "32"
+    # "0"
+    # "4"
+    "32"
 )
 strategies=(
     # "mdlm_vanilla"
@@ -51,19 +66,19 @@ strategies=(
     # "gidd_emulate_mdlm_adaptive_score_select_update"
     # "gidd_original"
     # "gidd_independent_positions_decomposed_update_distribution"
-    # "gidd_selected_positions_decomposed_update_distribution"
+    "gidd_selected_positions_decomposed_update_distribution"
     # "gidd_change_based_on_model_confidence_to_change"
-    # "gidd_keep_where_confident"
+    "gidd_keep_where_confident"
     # "gidd_flattened"
     "gidd_prob_to_recover_data"
 )
 score_mask_positions=(
     "MDM_max"
-    "MDM_margin"
+    # "MDM_margin"
 )
 score_positions_for_change=(
     "change_max"
-    "change_margin"
+    # "change_margin"
 )
 select_positions=(
     "top_k_gumbel"
@@ -73,14 +88,24 @@ select_positions_to_change=(
 )
 unmask_tokens=(
     "MDM_max"
-    "MDM_categorical"
+    # "MDM_categorical"
 )
 change_tokens=(
     "change_max"
-    "change_categorical"
+    # "change_categorical"
 )
 ks=(
     "1"
+    # "2"
+    # "3"
+    # "4"
+    # "5"
+    # "6"
+    # "7"
+    # "8"
+    # "9"
+    # "10"
+    # "15"
 )
 gumbel_noise_coefficients=(
     "0"
@@ -95,9 +120,9 @@ self_correction_strategies=(
 )
 oracles=(
     # "perfect"
-    "model"
+    # "model"
     # "recurrence"
-    "model_and_recurrence"
+    # "model_and_recurrence"
     "model_EMA"
 )
 position_sampling_strategies=(
@@ -105,13 +130,16 @@ position_sampling_strategies=(
     "top_k"
 )
 position_metric_strategies=(
-    "p_denoise"
-    "confident_and_p_denoise"
-    "confident_and_noisy"
+    # "p_denoise"
+    # "confident_and_p_denoise"
+    # "confident_and_noisy"
+    "margin_and_noisy"
+    # "noisy"
+    # "confident"
 )
 token_sampling_strategies=(
-    "categorical"
-    "change_max"
+    # "categorical"
+    # "change_max"
     "max"
 )
 uniform_noise_strategies=(
@@ -180,9 +208,11 @@ if [ $build_combinations_file = true ]; then
                             # - The strategy to select the new token once a position decides to unmask the current token.
                             # Note: unmasked tokens never change, thus the stopping criterion is that all tokens are unmasked.
                             if [[ " ${strategies[@]} " =~ " gidd_emulate_mdlm_vanilla " ]]; then
-                                for unmask_token in "${unmask_tokens[@]}"; do
-                                    echo "$ckpt,gidd_emulate_mdlm_vanilla,unmask_token=$unmask_token $suffix" >> $combinations_file
-                                done
+                                if (( $(echo "$noise == 0" | bc -l) )); then
+                                    for unmask_token in "${unmask_tokens[@]}"; do
+                                        echo "$ckpt,gidd_emulate_mdlm_vanilla,unmask_token=$unmask_token $suffix" >> $combinations_file
+                                    done
+                                fi
                             fi
 
                             # gidd_emulate_mdlm_adaptive_score_select_update
@@ -195,36 +225,42 @@ if [ $build_combinations_file = true ]; then
                             # - The strategy to select the new token once a position is selected.
                             # Note: current implementation does not allow tokens to change once unmasked (designed for p_u=0, should be equivalent to mdlm_adaptive_score_select_update)
                             if [[ " ${strategies[@]} " =~ " gidd_emulate_mdlm_adaptive_score_select_update " ]]; then
-                                for score_mask_position in "${score_mask_positions[@]}"; do
-                                    for select_position in "${select_positions[@]}"; do
-                                        if [ "$select_position" = "top_k_gumbel" ]; then
-                                            for k in "${ks[@]}"; do
-                                                for gn in "${gumbel_noise_coefficients[@]}"; do
-                                                    for unmask_token in "${unmask_tokens[@]}"; do
-                                                        if [[ "$unmask_token" == "MDM_max" && $(echo "$noise > 0" | bc -l) -eq 1 ]]; then
-                                                            for self_correction_strategy in "${self_correction_strategies[@]}"; do
-                                                                echo "$ckpt,gidd_emulate_mdlm_adaptive_score_select_update,score_mask_position=$score_mask_position select_position=$select_position unmask_token=$unmask_token k=$k gumbel_noise_coefficient=$gn self_correction=$self_correction_strategy $suffix" >> $combinations_file
-                                                            done
-                                                        else # Only try self-correction on promising configurations
-                                                            echo "$ckpt,gidd_emulate_mdlm_adaptive_score_select_update,score_mask_position=$score_mask_position select_position=$select_position unmask_token=$unmask_token k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
-                                                        fi
+                                if (( $(echo "$noise == 0" | bc -l) )); then
+                                    for score_mask_position in "${score_mask_positions[@]}"; do
+                                        for select_position in "${select_positions[@]}"; do
+                                            if [ "$select_position" = "top_k_gumbel" ]; then
+                                                for k in "${ks[@]}"; do
+                                                    for gn in "${gumbel_noise_coefficients[@]}"; do
+                                                        for unmask_token in "${unmask_tokens[@]}"; do
+                                                            if [[ "$unmask_token" == "MDM_max" && $(echo "$noise > 0" | bc -l) -eq 1 ]]; then
+                                                                for self_correction_strategy in "${self_correction_strategies[@]}"; do
+                                                                    echo "$ckpt,gidd_emulate_mdlm_adaptive_score_select_update,score_mask_position=$score_mask_position select_position=$select_position unmask_token=$unmask_token k=$k gumbel_noise_coefficient=$gn self_correction=$self_correction_strategy $suffix" >> $combinations_file
+                                                                done
+                                                            else # Only try self-correction on promising configurations
+                                                                echo "$ckpt,gidd_emulate_mdlm_adaptive_score_select_update,score_mask_position=$score_mask_position select_position=$select_position unmask_token=$unmask_token k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
+                                                            fi
+                                                        done
                                                     done
                                                 done
-                                            done
-                                        fi
+                                            fi
+                                        done
                                     done
-                                done
+                                fi
                             fi
 
                             # ---------- p_u leveraged ----------
 
-                            # gidd_original # should be equivalent to gidd_independent_positions_decomposed_update_distribution if the token is sampled categorially, but not if max is used (except that here, unmasked tokens can cange back to masks)
+                            # gidd_original # should be equivalent to gidd_independent_positions_decomposed_update_distribution if the token is sampled categorially, but not if max is used (except that here, unmasked tokens can change back to masks)
                             # Every position is updated in every step as follows:
                             # For each position, compute the probability p_i that the new token is token i, for all i in the vocabulary. And then sample categorically from this distribution.
                             # Note: the mask token is also in the vocabulary, thus unmasked tokens can change back to masks. Also, tokens can very well stay the same in a step, according to the probability for that.
                             # TODO: check whether unmasked tokens can actually change back to masks
                             if [[ " ${strategies[@]} " =~ " gidd_original " ]]; then
-                                echo "$ckpt,gidd_original,$suffix" >> $combinations_file
+                                if (( $(echo "$noise > 0" | bc -l) )); then
+                                    for self_correction_strategy in "${self_correction_strategies[@]}"; do
+                                        echo "$ckpt,gidd_original,self_correction=$self_correction_strategy $suffix" >> $combinations_file
+                                    done
+                                fi
                             fi
                             
                             # gidd_independent_positions_decomposed_update_distribution # if p_u=0, should be equivalent to gidd_emulate_mdlm_vanilla
@@ -235,9 +271,11 @@ if [ $build_combinations_file = true ]; then
                             # - The stopping criterion (e.g. no masks left)
                             # Note: unmasked tokens can change into other tokens, but never back to masks
                             if [[ " ${strategies[@]} " =~ " gidd_independent_positions_decomposed_update_distribution " ]]; then
-                                for change_token in "${change_tokens[@]}"; do
-                                    echo "$ckpt,gidd_independent_positions_decomposed_update_distribution,change_token=$change_token $suffix" >> $combinations_file
-                                done
+                                if (( $(echo "$noise > 0" | bc -l) )); then
+                                    for change_token in "${change_tokens[@]}"; do
+                                        echo "$ckpt,gidd_independent_positions_decomposed_update_distribution,change_token=$change_token $suffix" >> $combinations_file
+                                    done
+                                fi
                             fi
 
                             # gidd_selected_positions_decomposed_update_distribution
@@ -363,7 +401,20 @@ if [ $build_combinations_file = true ]; then
                                                             echo "$ckpt,gidd_prob_to_recover_data,oracle=$oracle position_sampling=$position_sampling position_metric=$position_metric token_sampling=$token_sampling uniform_noise=$uniform_noise $suffix" >> $combinations_file
                                                         done
                                                     else
-                                                        echo "$ckpt,gidd_prob_to_recover_data,oracle=$oracle position_sampling=$position_sampling position_metric=$position_metric token_sampling=$token_sampling $suffix" >> $combinations_file
+                                                        if [[ "$oracle" == "model_EMA" && "$position_sampling" == "independent" && "$position_metric" == "confident_and_noisy" && "$token_sampling" == "max" ]]; then
+                                                            # try adding self-correction
+                                                            for self_correction_strategy in "${self_correction_strategies[@]}"; do
+                                                                echo "$ckpt,gidd_prob_to_recover_data,oracle=$oracle position_sampling=$position_sampling position_metric=$position_metric token_sampling=$token_sampling self_correction=$self_correction_strategy $suffix" >> $combinations_file
+                                                            done
+                                                        else
+                                                            if [[ "$position_sampling" == "top_k" ]]; then
+                                                                for k in "${ks[@]}"; do
+                                                                    echo "$ckpt,gidd_prob_to_recover_data,oracle=$oracle position_sampling=$position_sampling position_metric=$position_metric token_sampling=$token_sampling k=$k $suffix" >> $combinations_file
+                                                                done
+                                                            else
+                                                                echo "$ckpt,gidd_prob_to_recover_data,oracle=$oracle position_sampling=$position_sampling position_metric=$position_metric token_sampling=$token_sampling $suffix" >> $combinations_file
+                                                            fi
+                                                        fi
                                                     fi
                                                 done
                                             done

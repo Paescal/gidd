@@ -33,6 +33,14 @@ def namespace_to_dict(ns):
     else:
         return ns
 
+def get_info_to_collect(strategy):
+    if strategy in ["mdlm_vanilla", "mdlm_adaptive_score_select_update"]:
+        return ["history", "logits", "forward_calls"]
+    elif strategy in ["gidd_prob_to_recover_data"]:
+        return ["history", "logits", "confidence_t_0", "marginals", "change_events", "forward_calls"]
+    else:
+        return ["history", "logits", "confidence_t_0", "marginals", "change_events", "forward_calls"]
+
 def main(args, sampling_config):
     device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
     torch.set_float32_matmul_precision('high')
@@ -53,10 +61,11 @@ def main(args, sampling_config):
     
     model.eval()
     strategy_metrics = {}
+    info_to_collect = get_info_to_collect(sampling_config.sampling.strategy)
     with tqdm.tqdm(total=args.num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
         with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
             data_loader = iter(data_loader)
-            generation_info_handler = GenerationInfoHandler(info=["history", "logits", "marginals", "change_events"], max_seq_len=ckpt_config.model.max_seq_len, sampling_config_dict=namespace_to_dict(sampling_config), noise_schedule=noise_schedule)
+            generation_info_handler = GenerationInfoHandler(info=info_to_collect, max_seq_len=ckpt_config.model.max_seq_len, sampling_config_dict=namespace_to_dict(sampling_config), noise_schedule=noise_schedule)
             for i in range(0, args.num_samples, args.batch_size):
                 batch = next(data_loader)
                 bs = min(args.batch_size, args.num_samples - i)
@@ -67,7 +76,8 @@ def main(args, sampling_config):
                     if i > 0:
                         generation_info_handler.collect_history = False
                         generation_info_handler.collect_logits = False
-                        # generation_info_handler.collect_marginals = False
+                        generation_info_handler.collect_confidence_t_0 = False
+                        generation_info_handler.collect_marginals = False
                     if i >= 2 * args.batch_size:
                         generation_info_handler.collect_change_events = False
 
@@ -94,10 +104,12 @@ def main(args, sampling_config):
     print(f"correctly_filled_cells={correctly_filled_cells:.4f}")
     print(f"not_fully_unmasked={not_fully_unmasked:.4f}")
     
-    generation_info_handler.collect_history = True
-    generation_info_handler.collect_logits = True
-    generation_info_handler.collect_marginals = True
-    generation_info_handler.collect_change_events = True
+    generation_info_handler.collect_history = "history" in info_to_collect
+    generation_info_handler.collect_logits = "logits" in info_to_collect
+    generation_info_handler.collect_confidence_t_0 = "confidence_t_0" in info_to_collect
+    generation_info_handler.collect_marginals = "marginals" in info_to_collect
+    generation_info_handler.collect_change_events = "change_events" in info_to_collect
+    generation_info_handler.collect_forward_calls = "forward_calls" in info_to_collect
     generation_info_handler.save_info(f"/local/home/prisold/gidd/outputs/generation_info/combination_{args.combinations_row}")
     # meta, history, marginals, change_events_table = generation_info_handler.load_all("/local/home/prisold/gidd/outputs/generation_info")
     # import pandas as pd
