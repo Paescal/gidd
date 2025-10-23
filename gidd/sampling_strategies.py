@@ -904,7 +904,7 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                 else:#TODO: why not in last step?
                     generation_info_handler.batch_step_change_events(i, self.z_t, probs, self.tokenizer.mask_token_id)
                 
-                if generation_info_handler.getattr(self, "collect_confidence_t_0", False):
+                if getattr(generation_info_handler, "collect_confidence_t_0", False):
                     logits = self.model(self.z_t, self.ts[0], puzzle_conditioning=self.puzzle_conditioning)
                     logits[..., self.tokenizer.mask_token_id:] = -1e6
                     probs = logits.softmax(-1)
@@ -978,10 +978,9 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                         blocked_logits_mask[sample_idx, position_idx, new_value] = 1
         return new_beams
 
-    def beam_score(self, beam): # shape of z_t: (batch_size=1, seq_len)
+    def beam_score(self, beam, score_time='t_zero', score_method='avg'): # shape of z_t: (batch_size=1, seq_len)
         self.set_state(beam)
-        infer_t = True
-        if infer_t:
+        if score_time == 'inferred':
             t, _ = self.infer_time_step()
         else:
             t = self.ts[0]
@@ -989,8 +988,13 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
         logits[..., self.tokenizer.mask_token_id:] = -1e6
         probs = logits.softmax(-1)
         p_zt_x = probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
-        p_zt_x_mean = mean_over_diffusion_positions(p_zt_x, self.diffusion_mask)
-        return p_zt_x_mean.squeeze(0).item()
+        if score_method == 'avg':
+            p_zt_x_mean = mean_over_diffusion_positions(p_zt_x, self.diffusion_mask)
+            return p_zt_x_mean.squeeze(0).item()
+        elif score_method == 'min':
+            p_zt_x = torch.where(torch.logical_and(self.diffusion_mask.to(dtype=bool), self.z_t != self.tokenizer.mask_token_id), p_zt_x, 1)
+            min_p_zt_x = torch.min(p_zt_x, dim=-1).values
+            return min_p_zt_x.squeeze(0).item()
      
     def beam_score_final(self, beam): # shape of z_t: (batch_size=1, seq_len)
         z_t = beam['z_t']
@@ -1001,3 +1005,9 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
         p_zt_x = torch.where(self.diffusion_mask.to(dtype=bool), p_zt_x, 1)
         min_p_zt_x = torch.min(p_zt_x, dim=-1).values
         return min_p_zt_x.squeeze(0).item()
+    
+    def beam_score_final_accepted(self, beam):
+        score = self.beam_score_final(beam)
+        if score >= 0.9995:
+            print(f'Final beam min p_zt_x: {score} ACCEPTED')
+        return score >= 0.9995

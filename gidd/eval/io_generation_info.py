@@ -119,6 +119,16 @@ def load_forward_calls(out_dir: str, map_location: str = "cpu") -> Dict[str, Any
     obj = torch.load(path, map_location=map_location, weights_only=True)
     return obj
 
+def save_prune_correct(prune_correct: list[Dict[str, Any]], out_dir: str) -> str:
+    path = os.path.join(out_dir, "prune_correct.pt")
+    torch.save(prune_correct, path)
+    return path
+
+def load_prune_correct(out_dir: str, map_location: str = "cpu") -> list[Dict[str, Any]]:
+    path = os.path.join(out_dir, "prune_correct.pt")
+    obj = torch.load(path, map_location=map_location, weights_only=True)
+    return obj
+
 def save_meta(meta: Dict[str, Any], out_dir: str) -> str:
     path = os.path.join(out_dir, "meta.json")
     with open(path, "w") as f:

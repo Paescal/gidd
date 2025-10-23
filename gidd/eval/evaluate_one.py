@@ -33,7 +33,9 @@ def namespace_to_dict(ns):
     else:
         return ns
 
-def get_info_to_collect(strategy):
+def get_info_to_collect(strategy, beam_search_config: bool):
+    if beam_search_config.do_beam_search == 'true':
+        return ["prune_correct"]
     if strategy in ["mdlm_vanilla", "mdlm_adaptive_score_select_update"]:
         return ["history", "logits", "forward_calls"]
     elif strategy in ["gidd_prob_to_recover_data"]:
@@ -41,7 +43,7 @@ def get_info_to_collect(strategy):
     else:
         return ["history", "logits", "confidence_t_0", "marginals", "change_events", "forward_calls"]
 
-def main(args, sampling_config):
+def main(args, sampling_config, beam_search_config):
     device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
     torch.set_float32_matmul_precision('high')
     torch.set_grad_enabled(False)
@@ -61,7 +63,7 @@ def main(args, sampling_config):
     
     model.eval()
     strategy_metrics = {}
-    info_to_collect = get_info_to_collect(sampling_config.sampling.strategy)
+    info_to_collect = get_info_to_collect(sampling_config.sampling.strategy, beam_search_config.beam_search)
     with tqdm.tqdm(total=args.num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
         with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
             data_loader = iter(data_loader)
@@ -78,15 +80,16 @@ def main(args, sampling_config):
                         generation_info_handler.collect_logits = False
                         generation_info_handler.collect_confidence_t_0 = False
                         generation_info_handler.collect_marginals = False
+                        generation_info_handler.collect_prune_correct = False
                     if i >= 2 * args.batch_size:
                         generation_info_handler.collect_change_events = False
 
                     if i == 0:
-                        samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, generation_info_handler=generation_info_handler, keep_history=True)
+                        samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, generation_info_handler=generation_info_handler, keep_history=True, beam_search_config=beam_search_config.beam_search)
                         # samples, history_of_first_batch = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, generation_info_handler=generation_info_handler, keep_history=True)
                         # history_solution = solutions_tokenized
                     else:
-                        samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, generation_info_handler=generation_info_handler, keep_history=False)
+                        samples = sampler.generate_from_given(batch['puzzle_ids'], diffusion_mask, solution=solutions_tokenized, num_denoising_steps=args.num_denoising_steps, num_self_correction_steps=args.num_self_correction_steps, decode=False, show_progress=False, generation_info_handler=generation_info_handler, keep_history=False, beam_search_config=beam_search_config.beam_search)
 
                 if ckpt_config.model.puzzle_conditioning == 'in_context':
                         samples = samples[..., -ckpt_config.model.max_seq_len:]
@@ -110,43 +113,8 @@ def main(args, sampling_config):
     generation_info_handler.collect_marginals = "marginals" in info_to_collect
     generation_info_handler.collect_change_events = "change_events" in info_to_collect
     generation_info_handler.collect_forward_calls = "forward_calls" in info_to_collect
+    generation_info_handler.collect_prune_correct = "prune_correct" in info_to_collect
     generation_info_handler.save_info(f"/local/home/prisold/gidd/outputs/generation_info/combination_{args.combinations_row}")
-    # meta, history, marginals, change_events_table = generation_info_handler.load_all("/local/home/prisold/gidd/outputs/generation_info")
-    # import pandas as pd
-    # if history is not None:
-    #     print("history:", history.shape)
-
-    # if marginals is not None:
-    #     print("total_accuracy shape:", marginals["total_accuracy"].shape)
-
-    # if isinstance(change_events_table, pd.DataFrame):
-    #     print(change_events_table.head())
-    #     # Example: conversion rates by step
-    #     by_step = (change_events_table.query('event_type == "uniform_to_denoised"')
-    #                     .groupby("step").size()
-    #             / change_events_table.groupby("step").size())
-    #     print("uniform->denoised share by step:\n", by_step)
-    
-    # generation_info_handler.print_info()
-    
-    # chosen_sample_for_history = 4 # debugging for checkpoints/gidd_0_2/100_epochs,gidd_keep_where_confident,"score_position_for_change=change_max select_position=top_k_gumbel change_token=change_max k=1 gumbel_noise_coefficient=0 self_correction=none dataset=hard num_samples=64 num_denoising_steps=81 batch_size=64 min_p=0 compile_torch=0 seed=1"
-    # chosen_sample_for_history = 32 # debugging for gidd_independent_positions_decomposed_update_distribution vs gidd_emulate_mdlm_vanilla
-    # chosen_sample_for_history = 19
-    # history = generation_info_handler.get_history().cpu()
-    # history_of_chosen_sample = history[chosen_sample_for_history]
-    # if ckpt_config.model.puzzle_conditioning == 'in_context':
-    #     history_of_chosen_sample = history_of_chosen_sample[:, -ckpt_config.model.max_seq_len:]
-    # print(history_to_str(history_of_chosen_sample[:-1], history_of_chosen_sample[-1]))
-
-    # marginals = generation_info_handler.get_marginals()
-    # print(marginals)
-
-    # history_of_chosen_sample = history_of_first_batch.cpu()[chosen_sample_for_history]
-    # history_solution = history_solution.cpu()[chosen_sample_for_history]
-    # if ckpt_config.model.puzzle_conditioning == 'in_context':
-    #     history_of_chosen_sample = history_of_chosen_sample[:, -ckpt_config.model.max_seq_len:]
-    #     history_solution = history_solution[-ckpt_config.model.max_seq_len:]
-    # print(history_to_str(history_of_chosen_sample, history_solution))
 
 
 if __name__ == "__main__":
@@ -181,6 +149,14 @@ if __name__ == "__main__":
     sampling_argument_group.add_argument('--token_sampling', type=str, default="categorical", help='Token sampling strategy for p_denoise')
     sampling_argument_group.add_argument('--uniform_noise', type=str, default="none", help='Uniform noise strategy for p_denoise')
 
+    beam_search_argument_group = parser.add_argument_group('Beam search arguments')
+    beam_search_argument_group.add_argument('--do_beam_search', type=str, default='false', help='Whether to use beam search')
+    beam_search_argument_group.add_argument('--steps_before_pruning', type=int, default=1, help='Number of steps before pruning beams')
+    beam_search_argument_group.add_argument('--pruning_num_beams', type=int, default=1, help='Number of beams to prune at each pruning step')
+    beam_search_argument_group.add_argument('--branching_factor', type=int, default=2, help='Branching factor for beam search')
+    beam_search_argument_group.add_argument('--score_time', type=str, default='after_pruning', help='The time to use in beam scoring for pruning')
+    beam_search_argument_group.add_argument('--score_method', type=str, default='avg', help='Method to score beams for pruning')
+
     args = parser.parse_args()
 
     sampling_config = dict_to_namespace({
@@ -206,4 +182,15 @@ if __name__ == "__main__":
         }
     })
 
-    main(args, sampling_config)
+    beam_search_config = dict_to_namespace({
+        "beam_search": {
+            "do_beam_search": args.do_beam_search,
+            "steps_before_pruning": args.steps_before_pruning,
+            "pruning_num_beams": args.pruning_num_beams,
+            "branching_factor": args.branching_factor,
+            "score_time": args.score_time,
+            "score_method": args.score_method,
+        }
+    })
+
+    main(args, sampling_config, beam_search_config)

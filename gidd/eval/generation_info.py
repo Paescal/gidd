@@ -40,6 +40,9 @@ class GenerationInfoHandler:
             self.collect_forward_calls = True
             self.forward_calls_by_sample = None
             self.forward_calls_by_batch = None
+        if "prune_correct" in info:
+            self.collect_prune_correct = True
+            self.prune_correct = []
 
     def batch_initialize(self, initial_z_t, diffusion_mask, solution, device):
         self.batch_size = initial_z_t.shape[0]
@@ -168,7 +171,17 @@ class GenerationInfoHandler:
     def batch_step_forward_calls(self, is_fully_denoised):
         if getattr(self, "collect_forward_calls", False):
             self.batch_forward_calls_by_sample += (~is_fully_denoised).to(torch.int)
-
+    
+    def prune_correct_step(self, beams_to_prune_info: Dict[str, Any]):
+        if getattr(self, "collect_prune_correct", False):
+            self.prune_correct.append({
+                'z_ts': torch.stack(beams_to_prune_info['z_ts']),
+                'beam_scores': torch.tensor(beams_to_prune_info['beam_scores']),
+                'is_correct': torch.tensor(beams_to_prune_info['is_correct']),
+                'solution': beams_to_prune_info['solution'],
+                'steps': torch.tensor(beams_to_prune_info['steps']),
+            })
+    
     def batch_finalize(self):
         self.num_samples += self.batch_size
         if getattr(self, "collect_history", False):
@@ -294,6 +307,12 @@ class GenerationInfoHandler:
         else:
             raise ValueError("Forward calls were not collected")
 
+    def get_prune_correct(self):
+        if getattr(self, "collect_prune_correct", False):
+            return self.prune_correct # list of dicts
+        else:
+            raise ValueError("Prune correct info was not collected")
+
     def print_info(self):
         if getattr(self, "collect_history", False):
             chosen_sample_for_history = 19
@@ -309,7 +328,7 @@ class GenerationInfoHandler:
         Saves collected data to `out_dir` with a stable schema.
         """
         from io_generation_info import (
-            _ensure_dir, save_meta, save_history, save_logits, save_confidence_t_0, save_marginals, save_change_events_table, save_forward_calls
+            _ensure_dir, save_meta, save_history, save_logits, save_confidence_t_0, save_marginals, save_change_events_table, save_forward_calls, save_prune_correct
         )
         _ensure_dir(out_dir)
 
@@ -324,6 +343,7 @@ class GenerationInfoHandler:
             "collect_marginals": getattr(self, "collect_marginals", False),
             "collect_change_events": getattr(self, "collect_change_events", False),
             "collect_forward_calls": getattr(self, "collect_forward_calls", False),
+            "collect_prune_correct": getattr(self, "collect_prune_correct", False),
         })
         meta.update(self.sampling_config_dict)
 
@@ -355,6 +375,13 @@ class GenerationInfoHandler:
         
         if getattr(self, "collect_forward_calls", False):
             save_forward_calls(self.get_forward_calls(), out_dir)
+        
+        if getattr(self, "collect_prune_correct", False):
+            prune_correct = self.get_prune_correct()
+            meta["prune_correct_length"] = len(prune_correct)
+            # ensure CPU for portability
+            prune_correct_cpu = [{k: (v.detach().cpu() if torch.is_tensor(v) else v) for k, v in entry.items()} for entry in prune_correct]
+            save_prune_correct(prune_correct_cpu, out_dir)
 
         save_meta(meta, out_dir)
 
@@ -363,7 +390,7 @@ class GenerationInfoHandler:
         """
         Convenience loader that returns (meta, history, marginals, change_events_df_or_list)
         """
-        from io_generation_info import load_meta, load_history, load_logits, load_confidence_t_0, load_marginals, load_change_events_table, load_forward_calls
+        from io_generation_info import load_meta, load_history, load_logits, load_confidence_t_0, load_marginals, load_change_events_table, load_forward_calls, load_prune_correct
         meta = load_meta(out_dir)
         history = load_history(out_dir, map_location) if meta.get("collect_history") else None
         logits = load_logits(out_dir, map_location) if meta.get("collect_logits") else None
@@ -372,4 +399,5 @@ class GenerationInfoHandler:
         # may return pandas.DataFrame or list of dicts depending on availability
         change_events_table = load_change_events_table(out_dir) if meta.get("collect_change_events") else None
         forward_calls = load_forward_calls(out_dir, map_location) if meta.get("collect_forward_calls") else None
-        return meta, history, logits, confidence_t_0, marginals, change_events_table, forward_calls
+        prune_correct = load_prune_correct(out_dir, map_location) if meta.get("collect_prune_correct") else None
+        return meta, history, logits, confidence_t_0, marginals, change_events_table, forward_calls, prune_correct
