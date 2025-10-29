@@ -129,6 +129,26 @@ def load_prune_correct(out_dir: str, map_location: str = "cpu") -> list[Dict[str
     obj = torch.load(path, map_location=map_location, weights_only=True)
     return obj
 
+def save_beam_search_forward_calls(beam_search_forward_calls: torch.Tensor, out_dir: str) -> str:
+    path = os.path.join(out_dir, "beam_search_forward_calls.pt")
+    torch.save({"beam_search_forward_calls": beam_search_forward_calls}, path)
+    return path
+
+def load_beam_search_forward_calls(out_dir: str, map_location: str = "cpu") -> torch.Tensor:
+    path = os.path.join(out_dir, "beam_search_forward_calls.pt")
+    obj = torch.load(path, map_location=map_location, weights_only=True)
+    return obj["beam_search_forward_calls"]
+
+def save_beam_search_branch_correctness(beam_search_branch_correctness: Dict[str, Any], out_dir: str) -> str:
+    path = os.path.join(out_dir, "beam_search_branch_correctness.pt")
+    torch.save(beam_search_branch_correctness, path)
+    return path
+
+def load_beam_search_branch_correctness(out_dir: str, map_location: str = "cpu") -> Dict[str, Any]:
+    path = os.path.join(out_dir, "beam_search_branch_correctness.pt")
+    obj = torch.load(path, map_location=map_location, weights_only=True)
+    return obj
+
 def save_meta(meta: Dict[str, Any], out_dir: str) -> str:
     path = os.path.join(out_dir, "meta.json")
     with open(path, "w") as f:

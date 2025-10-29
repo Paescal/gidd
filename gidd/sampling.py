@@ -37,7 +37,7 @@ class Sampler(nn.Module):
             return z_t
     
     @abstractmethod
-    def _do_generate_from_given(self, initial_z_t, diffusion_mask, solution, num_denoising_steps, num_self_correction_steps, max_length, show_progress, device, generation_info_handler, keep_history=False):
+    def _do_generate_from_given(self, initial_z_t, diffusion_mask, solution, num_denoising_steps, num_self_correction_steps, max_length, show_progress, device, generation_info_handler):
         raise NotImplementedError
     
     @abstractmethod
@@ -46,7 +46,7 @@ class Sampler(nn.Module):
     
     # Generate starting from a given z_t, the diffusion_mask is a tensor with the same shape as z_t of 0s and 1s, where 1 indicates that the token is NOT given and needs to be denoised
     @torch.no_grad()
-    def generate_from_given(self, z_t, diffusion_mask, solution=None, puzzle_conditioning=None, num_denoising_steps=128, num_self_correction_steps=0, max_length=None, decode=True, show_progress=True, generation_info_handler=None, keep_history=False, beam_search_config=None):
+    def generate_from_given(self, z_t, diffusion_mask, solution=None, puzzle_conditioning=None, num_denoising_steps=128, num_self_correction_steps=0, max_length=None, decode=True, show_progress=True, generation_info_handler=None, beam_search_config=None):
         max_length = max_length or self.model.config.model.max_seq_len
         # print("getting device")
         device = next(self.model.parameters()).device
@@ -57,11 +57,9 @@ class Sampler(nn.Module):
             z_t = self._do_beam_search(beam_search_config, z_t, diffusion_mask=diffusion_mask, solution=solution, puzzle_conditioning=puzzle_conditioning, num_denoising_steps=num_denoising_steps, num_self_correction_steps=num_self_correction_steps, max_length=max_length, device=device, generation_info_handler=generation_info_handler)
         else:
             if puzzle_conditioning is None:
-                z_t = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, solution=solution, puzzle_conditioning=z_t.clone(), num_denoising_steps=num_denoising_steps, num_self_correction_steps=num_self_correction_steps, max_length=max_length, show_progress=show_progress, device=device, generation_info_handler=generation_info_handler, keep_history=keep_history)
-                # z_t, history = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, solution=solution, puzzle_conditioning=z_t.clone(), num_denoising_steps=num_denoising_steps, num_self_correction_steps=num_self_correction_steps, max_length=max_length, show_progress=show_progress, device=device, generation_info_handler=generation_info_handler, keep_history=keep_history)
+                z_t = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, solution=solution, puzzle_conditioning=z_t.clone(), num_denoising_steps=num_denoising_steps, num_self_correction_steps=num_self_correction_steps, max_length=max_length, show_progress=show_progress, device=device, generation_info_handler=generation_info_handler)
             else:
-                z_t = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, solution=solution, puzzle_conditioning=puzzle_conditioning, num_denoising_steps=num_denoising_steps, num_self_correction_steps=num_self_correction_steps, max_length=max_length, show_progress=show_progress, device=device, generation_info_handler=generation_info_handler, keep_history=keep_history)
-                # z_t, history = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, solution=solution, puzzle_conditioning=puzzle_conditioning, num_denoising_steps=num_denoising_steps, num_self_correction_steps=num_self_correction_steps, max_length=max_length, show_progress=show_progress, device=device, generation_info_handler=generation_info_handler, keep_history=keep_history)
+                z_t = self._do_generate_from_given(z_t, diffusion_mask=diffusion_mask, solution=solution, puzzle_conditioning=puzzle_conditioning, num_denoising_steps=num_denoising_steps, num_self_correction_steps=num_self_correction_steps, max_length=max_length, show_progress=show_progress, device=device, generation_info_handler=generation_info_handler)
         # print("done calling _do_generate_from_given")
 
         if decode:
@@ -69,33 +67,26 @@ class Sampler(nn.Module):
             return texts
         else:
             return z_t
-            # if keep_history:
-            #     return z_t, history
-            # else:
-            #     return z_t
     
     @abstractmethod
-    def _do_generate_from_expected_t(self, initial_z_t, diffusion_mask, num_denoising_steps, add_random_tokens, max_length, show_progress, device, keep_history=False):
+    def _do_generate_from_expected_t(self, initial_z_t, diffusion_mask, num_denoising_steps, add_random_tokens, max_length, show_progress, device):
         raise NotImplementedError
     
     @torch.no_grad()
-    def generate_from_expected_t(self, z_t, diffusion_mask, num_denoising_steps=128, add_random_tokens=True, max_length=None, decode=True, show_progress=True, keep_history=False):
+    def generate_from_expected_t(self, z_t, diffusion_mask, num_denoising_steps=128, add_random_tokens=True, max_length=None, decode=True, show_progress=True):
         max_length = max_length or self.model.config.max_seq_len
         # print("getting device")
         device = next(self.model.parameters()).device
 
         # print("calling _do_generate_from_expected_t")
-        z_t, history = self._do_generate_from_expected_t(z_t, diffusion_mask=diffusion_mask, num_denoising_steps=num_denoising_steps, add_random_tokens=add_random_tokens, max_length=max_length, show_progress=show_progress, device=device, keep_history=keep_history)
+        z_t = self._do_generate_from_expected_t(z_t, diffusion_mask=diffusion_mask, num_denoising_steps=num_denoising_steps, add_random_tokens=add_random_tokens, max_length=max_length, show_progress=show_progress, device=device)
         # print("done calling _do_generate_from_expected_t")
 
         if decode:
             texts = self.tokenizer.batch_decode(z_t, skip_special_tokens=True)
             return texts
         else:
-            if keep_history:
-                return z_t, history
-            else:
-                return z_t
+            return z_t
 
 class GiddSampler(Sampler):
     class DenoisingStep(nn.Module):
@@ -154,7 +145,7 @@ class GiddSampler(Sampler):
             z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)]).clone()
         return z_t
     
-    def _do_generate_from_given(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, show_progress, device, generation_info_handler=None, keep_history=False):
+    def _do_generate_from_given(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, show_progress, device, generation_info_handler=None):
         ts = torch.linspace(0, 1, num_denoising_steps + 1, device=device).unsqueeze(-1)
         ts = (1 - 2 * self.t_eps) * ts + self.t_eps
         
@@ -162,8 +153,6 @@ class GiddSampler(Sampler):
         diffusion_mask = diffusion_mask.to(device, non_blocking=True)
         
         z_t = initial_z_t.clone()
-        
-        history = [initial_z_t.clone()] if keep_history else None
         
         # print("entering sampling loop in _do_generate_from_given")
         mask_token_id = self.sampling_step.tokenizer.mask_token_id
@@ -191,8 +180,6 @@ class GiddSampler(Sampler):
             # print(f"changes at: {indices_of_change}({indices_of_change - max_length}), old tokens: {torch.gather(old_z_t[sample_in_batch], 0, indices_of_change)}, new tokens: {torch.gather(z_t[sample_in_batch], 0, indices_of_change)}")
             # print(f"Step {i}, Puzzle: {puzzle_string}")
             # print((f"Fully unmasked: {(z_t[sample_in_batch, -max_length:] != mask_token_id).all()}"))
-            if keep_history:
-                history.append(z_t.clone())
             # if (z_t[:, -max_length:] != mask_token_id).all():
             #     print(f"All tokens unmasked at step {i}, stopping early.")
             #     break
@@ -203,32 +190,30 @@ class GiddSampler(Sampler):
         elif self_correction == "original":
             temp = 1
             tokens_per_step = 1
-            z_t, history_self_correction = self_correction_original(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, max_num_denoising_steps=num_self_correction_steps, keep_history=keep_history)
+            z_t = self_correction_original(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, max_num_denoising_steps=num_self_correction_steps)
         elif self_correction == "oscillation_prevention_fast":
             temp = 1
             tokens_per_step = 1
             backoff_factor=0.5
             recovery_factor_fast=0.2
             recovery_type='fast'
-            z_t, history_self_correction = self_correction_original_oscillation_prevention(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, max_num_denoising_steps=num_self_correction_steps, backoff_factor=backoff_factor, recovery_factor_fast=recovery_factor_fast, recovery_type=recovery_type, keep_history=keep_history)
+            z_t = self_correction_original_oscillation_prevention(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, max_num_denoising_steps=num_self_correction_steps, backoff_factor=backoff_factor, recovery_factor_fast=recovery_factor_fast, recovery_type=recovery_type)
         elif self_correction == "oscillation_prevention_slow":
             temp = 1
             tokens_per_step = 1
             backoff_factor=0.5
             recovery_factor_slow=0.4142
             recovery_type='slow'
-            z_t, history_self_correction = self_correction_original_oscillation_prevention(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, max_num_denoising_steps=num_self_correction_steps, backoff_factor=backoff_factor, recovery_factor_slow=recovery_factor_slow, recovery_type=recovery_type, keep_history=keep_history)
+            z_t = self_correction_original_oscillation_prevention(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, max_num_denoising_steps=num_self_correction_steps, backoff_factor=backoff_factor, recovery_factor_slow=recovery_factor_slow, recovery_type=recovery_type)
         elif self_correction == "keep_where_confident":
             temp = 1
             tokens_per_step = 1
-            z_t, history_self_correction = self_correction_keep_where_confident(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, max_num_denoising_steps=num_self_correction_steps, keep_history=keep_history)
+            z_t = self_correction_keep_where_confident(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, max_num_denoising_steps=num_self_correction_steps)
         # elif self_correction == "max":
         #     temp = 1
         #     tokens_per_step = 1
-        #     z_t, history_self_correction = self_correction_max(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step, keep_history=keep_history)
+        #     z_t = self_correction_max(self.model, self.tokenizer, diffusion_mask, z_t, ts[0].item(), temp, tokens_per_step)
         
-        if keep_history:
-            history = history + history_self_correction
         # print(f"fully unmasked samples: {(z_t[:, -max_length:] != mask_token_id).all(dim=1)}")
         
         # extra_step_counter = 0
@@ -236,19 +221,14 @@ class GiddSampler(Sampler):
         # while (z_t[:, -max_length:] == mask_token_id).any() and extra_step_counter < 10:
         #     extra_step_counter += 1
         #     z_t = self.sampling_step(z_t, ts[0], ts[0], diffusion_mask=diffusion_mask, puzzle_conditioning=puzzle_conditioning, sequence_length_without_conditioning=max_length)
-        #     if keep_history or debug_flag:
-        #         history.append(z_t.clone())
         # if extra_step_counter > 0:
         #     print(f"{extra_step_counter} extra steps taken to unmask remaining mask tokens, before: {mask_tokens_remaining}, after: {(z_t[:, -max_length:] == mask_token_id).sum()}, of total: {initial_num_mask_tokens}")
         #     # if debug_flag:
         #         # history_tensor = torch.stack(history, dim=0).permute(1, 0, 2)  # (bs, num_denoising_steps + 1, max_length)
         #         # print(f"history: {history_tensor[0, -extra_step_counter:, -max_length:]}")
-        if keep_history:
-            return z_t, torch.stack(history, dim=0).permute(1, 0, 2) # (num_denoising_steps + self_correction_steps + 1, bs, max_length) -> (bs, num_denoising_steps + self_correction_steps + 1, max_length)
-        else:
-            return z_t, None
+        return z_t
     
-    def _do_generate_from_expected_t(self, initial_z_t, diffusion_mask, num_denoising_steps, add_random_tokens, max_length, show_progress, device, keep_history=False):
+    def _do_generate_from_expected_t(self, initial_z_t, diffusion_mask, num_denoising_steps, add_random_tokens, max_length, show_progress, device):
         # TODO: when model was trained without diffusion_mask, how do you insert the knowledge of the given puzzle?
         # Idea: pass a modified diffusion_mask to not change anything until the denoising step is reached for which the puzzle is an expected state.
         # With uniform noise, the expected state is never k correct tokens and the rest masked, so potentially randomly unmask some non-given tokens.
@@ -299,8 +279,6 @@ class GiddSampler(Sampler):
         
         z_t = initial_z_t_noisy.clone() if add_random_tokens else initial_z_t.clone()
         
-        history = [z_t.clone()] if keep_history else None
-        
         # print("entering sampling loop in _do_generate_from_given")
         for i in tqdm.trange(num_denoising_steps - 1, -1, -1, desc="Generating samples", disable=not show_progress, dynamic_ncols=True):
             # print(f"sampling step {i}")
@@ -309,12 +287,7 @@ class GiddSampler(Sampler):
             current_diffusion_mask = diffusion_mask * most_likely_step_mask
             z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=current_diffusion_mask)
             # print(f"sampling step {i} done")
-            if keep_history:
-                history.append(z_t.clone())
-        if keep_history:
-            return z_t, torch.stack(history, dim=0).permute(1, 0, 2) # (bs, num_denoising_steps + 1, max_length)
-        else:
-            return z_t, None
+        return z_t
 
 class GiddSampler_new(Sampler):
     def __init__(self, config, model, tokenizer, noise_schedule: NoiseSchedule, t_eps=1e-4, compile_step=True, min_p=0.0):
@@ -335,7 +308,7 @@ class GiddSampler_new(Sampler):
         # return z_t
         raise NotImplementedError
     
-    def _do_generate_from_given(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, show_progress, device, generation_info_handler:GenerationInfoHandler=None, keep_history=False):
+    def _do_generate_from_given(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, show_progress, device, generation_info_handler:GenerationInfoHandler=None):
         self.sampling_strategy.initialize(initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device)
         if generation_info_handler is not None:
             generation_info_handler.batch_initialize(initial_z_t, diffusion_mask, solution, device)
@@ -356,6 +329,8 @@ class GiddSampler_new(Sampler):
         #     return self.sampling_strategy.z_t, []
     
     def _do_beam_search(self, beam_search_config, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device, generation_info_handler:GenerationInfoHandler=None):
+        def check_beam_correct(beam):
+            return (torch.logical_or(beam['z_t'] == solution, beam['z_t'] == self.tokenizer.mask_token_id) * diffusion_mask.bool()).sum().item() == torch.sum(diffusion_mask).item()
         # while beams exist with denoising_progress < max_denoising progress (=not done)
         #   while beams exist with steps_before_pruning > 0
         #       progress them by one step (branch by branching_factor)
@@ -368,16 +343,21 @@ class GiddSampler_new(Sampler):
 
         # Current assumptions: batch size == 1
 
+        if generation_info_handler is not None:
+            generation_info_handler.batch_initialize(initial_z_t, diffusion_mask, solution, device)
+
         max_num_steps = num_denoising_steps
         steps_before_pruning = beam_search_config.steps_before_pruning
         pruning_num_beams = beam_search_config.pruning_num_beams
         branching_factor = beam_search_config.branching_factor
         score_time = beam_search_config.score_time
         score_method = beam_search_config.score_method
-        initiate_beam_search_after_progress = 0.1
+        initiate_beam_search_after_progress = beam_search_config.initiate_beam_search_after_progress
         diffusion_mask = diffusion_mask.to(device, non_blocking=True)
         solution = solution.to(device, non_blocking=True)
-        progress_threshold_to_branch = int((torch.sum(diffusion_mask).item()) * initiate_beam_search_after_progress)
+        final_denoising_progress = torch.sum(diffusion_mask).item()
+        progress_threshold_to_branch = int(final_denoising_progress * initiate_beam_search_after_progress)
+        progress_threshold_to_branch_reached = False
 
         beams = []
         complete_beams = []
@@ -388,15 +368,17 @@ class GiddSampler_new(Sampler):
         initial_beam['step'] = 0
         beams.append(initial_beam)
         
-        final_denoising_progress = torch.sum(diffusion_mask).item()
         beam_search_complete = False
+        pruned_last_iteration = False
         while not beam_search_complete:
             next_beams = []
             beam_search_complete = True
             ready_for_pruning = True
             for beam in beams:
-                if beam['denoising_progress'] == final_denoising_progress:
-                    if self.sampling_strategy.beam_score_final_accepted(beam):
+                if beam['denoising_progress'] == final_denoising_progress and not pruned_last_iteration:
+                    if self.sampling_strategy.beam_score_final_accepted(beam, generation_info_handler):
+                        if generation_info_handler is not None:
+                            generation_info_handler.batch_finalize()
                         return beam['z_t']
                     elif beam['step'] >= max_num_steps:
                         complete_beams.append(beam)
@@ -404,22 +386,29 @@ class GiddSampler_new(Sampler):
                 beam_search_complete = False
                 if beam['steps_before_pruning'] > 0:
                     ready_for_pruning = False
+                    if not progress_threshold_to_branch_reached and beam['denoising_progress'] >= progress_threshold_to_branch:
+                        progress_threshold_to_branch_reached = True
+                        if generation_info_handler is not None:
+                            generation_info_handler.beam_search_initial_beam_correct_step(check_beam_correct(beam))
+
                     if beam['denoising_progress'] >= progress_threshold_to_branch and beam['steps_before_pruning'] == steps_before_pruning:
                         current_branching_factor = branching_factor
                     else:
                         current_branching_factor = 1
-                    new_beams = self.sampling_strategy.branch_step(beam, current_branching_factor)
+                    new_beams = self.sampling_strategy.branch_step(beam, current_branching_factor, generation_info_handler)
                     num_correct = 0
                     for new_beam in new_beams:
                         new_beam['steps_before_pruning'] = beam['steps_before_pruning'] - 1
                         new_beam['denoising_progress'] = torch.sum((new_beam['z_t'] != self.tokenizer.mask_token_id) * diffusion_mask).item()
                         new_beam['step'] = beam['step'] + 1
-                        if (torch.logical_or(new_beam['z_t'] == solution, new_beam['z_t'] == self.tokenizer.mask_token_id) * diffusion_mask.bool()).sum().item() == torch.sum(diffusion_mask).item():
+                        if check_beam_correct(new_beam):
                             num_correct += 1
                     # print(f"Step {beam['step']}: branched into {len(new_beams)} beams, {num_correct} correct")
-                    old_beam_is_correct = (torch.logical_or(beam['z_t'] == solution, beam['z_t'] == self.tokenizer.mask_token_id) * diffusion_mask.bool()).sum().item() == torch.sum(diffusion_mask).item()
-                    if old_beam_is_correct and num_correct == 0:
-                        print(f'Step {beam["step"]}: branched out of a correct beam but none of the new beams are correct!')
+                    old_beam_is_correct = check_beam_correct(beam)
+                    # if old_beam_is_correct and num_correct == 0:
+                    #     print(f'Step {beam["step"]}: branched out of a correct beam but none of the new beams are correct!')
+                    # elif not old_beam_is_correct and num_correct > 0:
+                    #     print(f'Step {beam["step"]}: branched into {num_correct} correct beams from an incorrect beam!')
                     next_beams = next_beams + new_beams
                 else:
                     next_beams.append(beam)
@@ -427,35 +416,44 @@ class GiddSampler_new(Sampler):
             #     print(f"Before deduplication: {len(next_beams)} beams")
             next_beams = deduplicate(next_beams)
             if not ready_for_pruning:
-                num_correct = [(torch.logical_or(beam['z_t'] == solution, beam['z_t'] == self.tokenizer.mask_token_id) * diffusion_mask.bool()).sum().item() == torch.sum(diffusion_mask).item() for beam in next_beams].count(True)
+                pruned_last_iteration = False
+                num_correct = [check_beam_correct(beam) for beam in next_beams].count(True)
                 # print(f"After deduplication: {len(next_beams)} beams, {num_correct} correct")
             if ready_for_pruning and not beam_search_complete:
+                pruned_last_iteration = True
                 # perform pruning
                 min_progress = min([beam['denoising_progress'] for beam in next_beams])
                 beams_to_prune = [beam for beam in next_beams if beam['denoising_progress'] == min_progress]
-                num_correct_before_pruning = [(torch.logical_or(beam['z_t'] == solution, beam['z_t'] == self.tokenizer.mask_token_id) * diffusion_mask.bool()).sum().item() == torch.sum(diffusion_mask).item() for beam in beams_to_prune].count(True)
-                # compute scores for beams to prune
-                beam_scores = []
-                for beam in beams_to_prune:
-                    score = self.sampling_strategy.beam_score(beam, score_time, score_method)
-                    beam_scores.append(score)
-                # select top pruning_num_beams beams
-                topk_indices = torch.topk(torch.tensor(beam_scores), k=min(pruning_num_beams, len(beam_scores))).indices.tolist()
-                pruned_beams = [beams_to_prune[i] for i in topk_indices]
+                num_correct_before_pruning = [check_beam_correct(beam) for beam in beams_to_prune].count(True)
+                num_incorrect_before_pruning = len(beams_to_prune) - num_correct_before_pruning
+                if len(beams_to_prune) > pruning_num_beams:
+                    # compute scores for beams to prune
+                    beam_scores = []
+                    for beam in beams_to_prune:
+                        score = self.sampling_strategy.beam_score(beam, score_time, score_method, generation_info_handler)
+                        beam_scores.append(score)
+                    # select top pruning_num_beams beams
+                    topk_indices = torch.topk(torch.tensor(beam_scores), k=min(pruning_num_beams, len(beams_to_prune))).indices.tolist()
+                    pruned_beams = [beams_to_prune[i] for i in topk_indices]
+                else:
+                    pruned_beams = beams_to_prune
                 # reset steps_before_pruning
                 for beam in pruned_beams:
                     beam['steps_before_pruning'] = steps_before_pruning
-                num_correct_after_pruning = [(torch.logical_or(beam['z_t'] == solution, beam['z_t'] == self.tokenizer.mask_token_id) * diffusion_mask.bool()).sum().item() == torch.sum(diffusion_mask).item() for beam in pruned_beams].count(True)
-                if num_correct_before_pruning > 0 and num_correct_after_pruning == 0:
-                    is_beam_correct = [(torch.logical_or(beam['z_t'] == solution, beam['z_t'] == self.tokenizer.mask_token_id) * diffusion_mask.bool()).sum().item() == torch.sum(diffusion_mask).item() for beam in beams_to_prune]
-                    generation_info_handler.prune_correct_step({
-                        'z_ts': [beam['z_t'].squeeze(0) for beam in beams_to_prune],
-                        'beam_scores': beam_scores,
-                        'is_correct': is_beam_correct,
-                        'solution': solution.squeeze(0),
-                        'steps': [beam['step'] for beam in beams_to_prune],
-                    })
-                    print(f'Step {beam["step"]}: pruned out all correct beams! beam scores: {beam_scores}, correct beam? {is_beam_correct}')
+                num_correct_after_pruning = [check_beam_correct(beam) for beam in pruned_beams].count(True)
+                num_incorrect_after_pruning = len(pruned_beams) - num_correct_after_pruning
+                if generation_info_handler is not None:
+                    if num_correct_before_pruning > 0 and num_correct_after_pruning == 0:
+                        is_beam_correct = [check_beam_correct(beam) for beam in beams_to_prune]
+                        generation_info_handler.prune_correct_step({
+                            'z_ts': [beam['z_t'].squeeze(0) for beam in beams_to_prune],
+                            'beam_scores': beam_scores,
+                            'is_correct': is_beam_correct,
+                            'solution': solution.squeeze(0),
+                            'steps': [beam['step'] for beam in beams_to_prune],
+                        })
+                        # print(f'Step {beam["step"]}: pruned out all correct beams! beam scores: {beam_scores}, correct beam? {is_beam_correct}')
+                    generation_info_handler.beam_search_branch_correctness_step(min_progress / final_denoising_progress, num_correct_before_pruning, num_incorrect_before_pruning, num_correct_after_pruning, num_incorrect_after_pruning)
                 # add pruned beams back to next_beams
                 next_beams = [beam for beam in next_beams if beam['denoising_progress'] != min_progress] + pruned_beams
                 # print(f"After pruning: {len(next_beams)} beams, {[(torch.logical_or(beam['z_t'] == solution, beam['z_t'] == self.tokenizer.mask_token_id) * diffusion_mask.bool()).sum().item() == torch.sum(diffusion_mask).item() for beam in next_beams].count(True)} correct")
@@ -465,12 +463,14 @@ class GiddSampler_new(Sampler):
         best_beam = None
         best_score = -float('inf')
         for beam in complete_beams:
-            score = self.sampling_strategy.beam_score_final(beam) # may want to use a special score function for completed beams (e.g. min confidence over all tokens)
+            score = self.sampling_strategy.beam_score_final(beam, generation_info_handler) # may want to use a special score function for completed beams (e.g. min confidence over all tokens)
             if score > best_score:
                 best_score = score
                 best_beam = beam
-        if (best_beam['z_t'] != solution).any():
-            print(f'failed to find correct solution in beam search, best score: {best_score}')
+        # if (best_beam['z_t'] != solution).any():
+        #     print(f'failed to find correct solution in beam search, best score: {best_score}')
+        if generation_info_handler is not None:
+            generation_info_handler.batch_finalize()
         return best_beam['z_t']
 
 class MDLMSampler(Sampler):
@@ -481,9 +481,6 @@ class MDLMSampler(Sampler):
             self.noise_schedule = noise_schedule
             self.mask_id = tokenizer.mask_token_id
             self.min_p = min_p
-            # self.position_metric = get_position_metric(config, tokenizer)
-            # self.position_sampling_strategy = get_position_sampling_strategy(config)
-            # self.token_sampling_strategy = get_token_sampling_strategy(config, tokenizer)
             self.sampling_strategy = get_sampling_strategy(config, tokenizer)
             self.config = config
 
@@ -526,15 +523,13 @@ class MDLMSampler(Sampler):
 
         return z_t
     
-    def _do_generate_from_given(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, show_progress, device, generation_info_handler=None, keep_history=False):
+    def _do_generate_from_given(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, show_progress, device, generation_info_handler=None):
         ts = torch.linspace(self.t_eps, 1 - self.t_eps, num_denoising_steps + 1, device=device).unsqueeze(-1)
 
         initial_z_t = initial_z_t.to(device, non_blocking=True)
         diffusion_mask = diffusion_mask.to(device, non_blocking=True)
 
         z_t = initial_z_t.clone()
-
-        # history = [initial_z_t.clone()] if keep_history else None
 
         if generation_info_handler is not None:
             generation_info_handler.batch_initialize(initial_z_t, diffusion_mask, solution, device)
@@ -543,16 +538,9 @@ class MDLMSampler(Sampler):
             if generation_info_handler is not None:
                 generation_info_handler.batch_step_history(z_t)
             z_t = self.sampling_step(z_t, ts[i], ts[max(0, i-1)], diffusion_mask=diffusion_mask, i=i, eps=self.t_eps, generation_info_handler=generation_info_handler).clone()
-            # if keep_history:
-            #     history.append(z_t.clone())
         if generation_info_handler is not None:
             generation_info_handler.batch_step_history(z_t)
             generation_info_handler.batch_finalize()
-        
-        # if keep_history:
-        #     return z_t, torch.stack(history, dim=0).permute(1, 0, 2)
-        # else:
-        #     return z_t, None
         return z_t
 
 

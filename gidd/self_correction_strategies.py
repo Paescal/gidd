@@ -111,7 +111,7 @@ class PositionBackoffHandler:
 
 
 def get_self_correction(config):
-    match config.sampling.self_correction:
+    match config.self_correction:
         case "none":
             return None
         case "original":

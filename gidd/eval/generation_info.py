@@ -43,6 +43,14 @@ class GenerationInfoHandler:
         if "prune_correct" in info:
             self.collect_prune_correct = True
             self.prune_correct = []
+        if "beam_search_forward_calls" in info:
+            self.collect_beam_search_forward_calls = True
+            self.beam_search_forward_calls = []
+        if "beam_search_branch_correctness" in info:
+            self.collect_beam_search_branch_correctness = True
+            self.beam_search_branch_correctness = []
+            self.num_correct_before_initial_branch = 0
+            self.num_samples = 0
 
     def batch_initialize(self, initial_z_t, diffusion_mask, solution, device):
         self.batch_size = initial_z_t.shape[0]
@@ -74,6 +82,8 @@ class GenerationInfoHandler:
             self.batch_change_events = [[] for _ in range(self.batch_size)]
         if getattr(self, "collect_forward_calls", False):
             self.batch_forward_calls_by_sample = torch.zeros(self.batch_size, dtype=torch.int, device=device)
+        if getattr(self, "collect_beam_search_forward_calls", False):
+            self.batch_beam_search_forward_calls = 0
             
     
     def batch_step_history(self, z_t):
@@ -182,6 +192,26 @@ class GenerationInfoHandler:
                 'steps': torch.tensor(beams_to_prune_info['steps']),
             })
     
+    def beam_search_forward_calls_step(self):
+        if getattr(self, "collect_beam_search_forward_calls", False):
+            self.batch_beam_search_forward_calls += 1
+    
+    def beam_search_initial_beam_correct_step(self, is_correct: bool):
+        if getattr(self, "collect_beam_search_branch_correctness", False):
+            if is_correct:
+                self.num_correct_before_initial_branch += 1
+            self.num_samples += 1
+    
+    def beam_search_branch_correctness_step(self, denoising_progress, num_correct_before_pruning: int, num_incorrect_before_pruning: int, num_correct_after_pruning: int, num_incorrect_after_pruning: int):
+        if getattr(self, "collect_beam_search_branch_correctness", False):
+            self.beam_search_branch_correctness.append({
+                'denoising_progress': denoising_progress,
+                'num_correct_before_pruning': num_correct_before_pruning,
+                'num_incorrect_before_pruning': num_incorrect_before_pruning,
+                'num_correct_after_pruning': num_correct_after_pruning,
+                'num_incorrect_after_pruning': num_incorrect_after_pruning,
+            })
+
     def batch_finalize(self):
         self.num_samples += self.batch_size
         if getattr(self, "collect_history", False):
@@ -255,6 +285,8 @@ class GenerationInfoHandler:
             else:
                 self.forward_calls_by_sample = torch.cat([self.forward_calls_by_sample, self.batch_forward_calls_by_sample.cpu()], dim=0)
                 self.forward_calls_by_batch.append(torch.max(self.batch_forward_calls_by_sample).item())
+        if getattr(self, "collect_beam_search_forward_calls", False):
+            self.beam_search_forward_calls.append(self.batch_beam_search_forward_calls)
 
     def get_history(self):
         if getattr(self, "collect_history", False):
@@ -312,6 +344,22 @@ class GenerationInfoHandler:
             return self.prune_correct # list of dicts
         else:
             raise ValueError("Prune correct info was not collected")
+    
+    def get_beam_search_forward_calls(self):
+        if getattr(self, "collect_beam_search_forward_calls", False):
+            return torch.tensor(self.beam_search_forward_calls) # shape (num_batches)
+        else:
+            raise ValueError("Beam search forward calls were not collected")
+    
+    def get_beam_search_branch_correctness(self):
+        if getattr(self, "collect_beam_search_branch_correctness", False):
+            return {
+                'beam_search_branch_correctness': torch.tensor(self.beam_search_branch_correctness), # list of dicts
+                'num_correct_before_initial_branch': self.num_correct_before_initial_branch,
+                'num_samples': self.num_samples,
+            }
+        else:
+            raise ValueError("Beam search branch correctness info was not collected")
 
     def print_info(self):
         if getattr(self, "collect_history", False):
@@ -328,7 +376,7 @@ class GenerationInfoHandler:
         Saves collected data to `out_dir` with a stable schema.
         """
         from io_generation_info import (
-            _ensure_dir, save_meta, save_history, save_logits, save_confidence_t_0, save_marginals, save_change_events_table, save_forward_calls, save_prune_correct
+            _ensure_dir, save_meta, save_history, save_logits, save_confidence_t_0, save_marginals, save_change_events_table, save_forward_calls, save_prune_correct, save_beam_search_forward_calls, save_beam_search_branch_correctness
         )
         _ensure_dir(out_dir)
 
@@ -344,6 +392,8 @@ class GenerationInfoHandler:
             "collect_change_events": getattr(self, "collect_change_events", False),
             "collect_forward_calls": getattr(self, "collect_forward_calls", False),
             "collect_prune_correct": getattr(self, "collect_prune_correct", False),
+            "collect_beam_search_forward_calls": getattr(self, "collect_beam_search_forward_calls", False),
+            "collect_beam_search_branch_correctness": getattr(self, "collect_beam_search_branch_correctness", False),
         })
         meta.update(self.sampling_config_dict)
 
@@ -376,12 +426,18 @@ class GenerationInfoHandler:
         if getattr(self, "collect_forward_calls", False):
             save_forward_calls(self.get_forward_calls(), out_dir)
         
+        if getattr(self, "collect_beam_search_forward_calls", False):
+            save_beam_search_forward_calls(self.get_beam_search_forward_calls().detach().cpu(), out_dir)
+
         if getattr(self, "collect_prune_correct", False):
             prune_correct = self.get_prune_correct()
             meta["prune_correct_length"] = len(prune_correct)
             # ensure CPU for portability
             prune_correct_cpu = [{k: (v.detach().cpu() if torch.is_tensor(v) else v) for k, v in entry.items()} for entry in prune_correct]
             save_prune_correct(prune_correct_cpu, out_dir)
+        
+        if getattr(self, "collect_beam_search_branch_correctness", False):
+            save_beam_search_branch_correctness(self.get_beam_search_branch_correctness(), out_dir)
 
         save_meta(meta, out_dir)
 
@@ -390,7 +446,7 @@ class GenerationInfoHandler:
         """
         Convenience loader that returns (meta, history, marginals, change_events_df_or_list)
         """
-        from io_generation_info import load_meta, load_history, load_logits, load_confidence_t_0, load_marginals, load_change_events_table, load_forward_calls, load_prune_correct
+        from io_generation_info import load_meta, load_history, load_logits, load_confidence_t_0, load_marginals, load_change_events_table, load_forward_calls, load_prune_correct, load_beam_search_forward_calls, load_beam_search_branch_correctness
         meta = load_meta(out_dir)
         history = load_history(out_dir, map_location) if meta.get("collect_history") else None
         logits = load_logits(out_dir, map_location) if meta.get("collect_logits") else None
@@ -400,4 +456,6 @@ class GenerationInfoHandler:
         change_events_table = load_change_events_table(out_dir) if meta.get("collect_change_events") else None
         forward_calls = load_forward_calls(out_dir, map_location) if meta.get("collect_forward_calls") else None
         prune_correct = load_prune_correct(out_dir, map_location) if meta.get("collect_prune_correct") else None
-        return meta, history, logits, confidence_t_0, marginals, change_events_table, forward_calls, prune_correct
+        beam_search_forward_calls = load_beam_search_forward_calls(out_dir, map_location) if meta.get("collect_beam_search_forward_calls") else None
+        beam_search_branch_correctness = load_beam_search_branch_correctness(out_dir, map_location) if meta.get("collect_beam_search_branch_correctness") else None
+        return meta, history, logits, confidence_t_0, marginals, change_events_table, forward_calls, prune_correct, beam_search_forward_calls, beam_search_branch_correctness

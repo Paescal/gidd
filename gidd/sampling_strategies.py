@@ -25,21 +25,21 @@ from gidd.utils import (
 from gidd.self_correction_strategies import get_self_correction
 
 def get_score_mask_position(config, tokenizer):
-    match config.sampling.score_mask_position:
+    match config.score_mask_position:
         case "MDM_max":
             return partial(score_mask_position_max, tokenizer=tokenizer)
         case "MDM_margin":
             return partial(score_mask_position_margin, tokenizer=tokenizer)
 
 def get_score_position_for_change(config):
-    match config.sampling.score_position_for_change:
+    match config.score_position_for_change:
         case "change_max":
             return partial(score_position_for_change_max)
         case "change_margin":
             return partial(score_position_for_change_margin)
 
 def get_score_position_for_keep_where_confident(config):
-    match config.sampling.score_position_for_change:
+    match config.score_position_for_change:
         case "change_max":
             return partial(score_position_for_keep_where_confident_max)
         case "change_margin":
@@ -48,11 +48,11 @@ def get_score_position_for_keep_where_confident(config):
 def get_select_position(config, arg_name='select_position'):
     match arg_name:
         case 'select_position':
-            arg = config.sampling.select_position
+            arg = config.select_position
         case 'select_position_change':
-            arg = config.sampling.select_position_change
+            arg = config.select_position_change
         case 'select_position_unmask':
-            arg = config.sampling.select_position_unmask
+            arg = config.select_position_unmask
         case _:
             raise ValueError(f"Unknown argument name: {arg_name}")
 
@@ -62,24 +62,24 @@ def get_select_position(config, arg_name='select_position'):
         case "independent":
             return sample_positions_independently
         case "top_k_gumbel":
-            return partial(sample_position_top_k_gumbel, k=config.sampling.k, gumbel_noise_coefficient=config.sampling.gumbel_noise_coefficient)
+            return partial(sample_position_top_k_gumbel, k=config.k, gumbel_noise_coefficient=config.gumbel_noise_coefficient)
 
 def get_unmask_token(config, tokenizer):
-    match config.sampling.unmask_token:
+    match config.unmask_token:
         case "MDM_max":
             return partial(sample_token_MDM_max)
         case "MDM_categorical":
             return partial(sample_token_MDM_categorical, tokenizer=tokenizer)
 
 def get_change_token(config, tokenizer):
-    match config.sampling.change_token:
+    match config.change_token:
         case "change_max":
             return partial(sample_token_change_max)
         case "change_categorical":
             return partial(sample_token_change_categorical, tokenizer=tokenizer)
 
 def get_sampling_strategy(config, tokenizer, noise_schedule=None, min_p=None):
-    match config.sampling.strategy:
+    match config.strategy:
         case "mdlm_vanilla":
             return partial(mdlm_vanilla,
                            unmask_token=get_unmask_token(config, tokenizer),)
@@ -130,6 +130,13 @@ def get_sampling_strategy(config, tokenizer, noise_schedule=None, min_p=None):
                            score_position_for_keep_where_confident=get_score_position_for_keep_where_confident(config),
                            select_position=get_select_position(config),
                            change_token=get_change_token(config, tokenizer),)
+        case "gidd_change_low_confidence_positions":
+            return partial(gidd_change_low_confidence_positions,
+                           tokenizer=tokenizer,
+                           score_mask_position=get_score_mask_position(config, tokenizer),
+                           select_position_unmask=get_select_position(config, arg_name='select_position_unmask'),
+                           change_token=get_change_token(config, tokenizer),
+                           unmask_token=get_unmask_token(config, tokenizer),)
         case "gidd_flattened":
             return partial(gidd_flattened,
                            tokenizer=tokenizer,)
@@ -208,7 +215,7 @@ def gidd_original(probs, z_t, t, s, i, diffusion_mask, tokenizer, noise_schedule
         vocab_size_architecturally = len(tokenizer)
         vz_t = F.one_hot(z_t, num_classes=vocab_size_architecturally)
         beta_pi_ts_at_zt = beta_pi_ts.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
-        q_ts = (alpha_ts * vz_t + beta_pi_ts_at_zt)
+        q_ts = (alpha_ts.unsqueeze(-1) * vz_t + beta_pi_ts_at_zt)
 
         q_st = q_ts * q_s / q_zt
         
@@ -223,13 +230,6 @@ def gidd_original(probs, z_t, t, s, i, diffusion_mask, tokenizer, noise_schedule
         
         update_positions = torch.ones_like(z_t, dtype=torch.bool)
         next_z_t = sample_categorical(q_st, end_index=tokenizer.unk_token_id - 1)
-        # if i == 76 or i == 75:
-        #     print(f"q_st: {q_st[0, 81, :10]}")
-        #     print(f"q_ts: {q_ts[0, 81, :10]}")
-        #     print(f"q_s: {q_s[0, 81, :10]}")
-        #     print(f"q_zt: {q_zt[0, 81].item()}")
-        #     print(f"z_t: {z_t[0, 81].item()}")
-        #     print(f"next_z_t: {next_z_t[0, 81].item()}")
     return update_positions, next_z_t
 
 @torch.no_grad()
@@ -251,7 +251,7 @@ def gidd_independent_positions_decomposed_update_distribution(probs, z_t, t, s, 
         vocab_size_architecturally = len(tokenizer)
         vz_t = F.one_hot(z_t, num_classes=vocab_size_architecturally)
         beta_pi_ts_at_zt = beta_pi_ts.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
-        q_ts = (alpha_ts * vz_t + beta_pi_ts_at_zt)
+        q_ts = (alpha_ts.unsqueeze(-1) * vz_t + beta_pi_ts_at_zt)
 
         q_st = q_ts * q_s / q_zt
         
@@ -284,7 +284,7 @@ def gidd_selected_positions_decomposed_update_distribution(probs, z_t, t, s, i, 
         vocab_size_architecturally = len(tokenizer)
         vz_t = F.one_hot(z_t, num_classes=vocab_size_architecturally)
         beta_pi_ts_at_zt = beta_pi_ts.unsqueeze(1).expand_as(vz_t).gather(-1, z_t.unsqueeze(-1))
-        q_ts = (alpha_ts * vz_t + beta_pi_ts_at_zt)
+        q_ts = (alpha_ts.unsqueeze(-1) * vz_t + beta_pi_ts_at_zt)
 
         q_st = q_ts * q_s / q_zt
         
@@ -332,17 +332,6 @@ def gidd_selected_positions_decomposed_update_distribution(probs, z_t, t, s, i, 
 
         next_z_t = update_positions_change * next_z_t_change + update_positions_unmask * next_z_t_unmask
         update_positions = update_positions_change | update_positions_unmask
-
-        # if positions_to_change.any():#TODO: choose between change and unmask on a per sample basis, not per batch
-        #     score = probs_to_change * positions_to_change.to(dtype=probs_to_change.dtype)
-        #     score = score * diffusion_mask
-        #     update_positions = select_position_change(score)
-        #     next_z_t = change_token(probs, z_t)
-        # else:
-        #     score = score_mask_position(z_t, probs)
-        #     score = score * diffusion_mask * (z_t == tokenizer.mask_token_id).to(dtype=score.dtype)
-        #     update_positions = select_position_unmask(score)
-        #     next_z_t = unmask_token(probs)
     return update_positions, next_z_t
 
 
@@ -360,6 +349,26 @@ def gidd_keep_where_confident(probs, z_t, t, s, i, diffusion_mask, score_positio
         score = score_position_for_keep_where_confident(z_t, probs) * diffusion_mask
         update_positions = select_position(score)
         next_z_t = change_token(probs, z_t)
+    return update_positions, next_z_t
+
+def gidd_change_low_confidence_positions(probs, z_t, t, s, i, diffusion_mask, tokenizer, score_mask_position, select_position_unmask, unmask_token, change_token):
+    if i == 0:
+        update_positions = (z_t == 9)
+        next_z_t = probs.argmax(-1)
+    else:
+        confidence_current_token = probs.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
+        max_confidence = probs.max(-1).values
+        low_confidence_positions = (confidence_current_token < max_confidence) * (z_t != tokenizer.mask_token_id) * diffusion_mask.to(dtype=bool)
+        samples_where_change = low_confidence_positions.any(dim=-1)
+        next_z_t_change = change_token(probs, z_t)
+
+        score_unmask = score_mask_position(z_t, probs) * (z_t == tokenizer.mask_token_id) * diffusion_mask
+        update_positions_unmask = select_position_unmask(score_unmask)
+        update_positions_unmask = update_positions_unmask * ~samples_where_change.unsqueeze(-1)
+        next_z_t_unmask = unmask_token(probs)
+
+        update_positions = low_confidence_positions | update_positions_unmask
+        next_z_t = low_confidence_positions * next_z_t_change + update_positions_unmask * next_z_t_unmask
     return update_positions, next_z_t
 
 def gidd_flattened(probs:torch.Tensor, z_t, t, s, i, num_denoising_steps, diffusion_mask, max_score, tokenizer):
@@ -395,16 +404,6 @@ def gidd_flattened(probs:torch.Tensor, z_t, t, s, i, num_denoising_steps, diffus
     # next_z_t = torch.where(has_new_max, largest_probs_indices, z_t) # alternative
     next_z_t = torch.where(has_new_max, largest_probs_indices, tokenizer.mask_token_id)
     next_z_t = torch.where(update_positions & ~has_multiple_selected_tokens, largest_probs_indices, next_z_t)
-    # if num_tokens == 2:
-    #     # next_z_t_for_print = torch.where(diffusion_mask.bool(), next_z_t, 9)
-    #     print(f"next_z_t: {next_z_t[0, 81:]}")
-    #     # print(f"next_z_t for print: {next_z_t_for_print[0, 81:]}")
-    #     torch.set_printoptions(threshold=100_000)
-    #     print(f"selected_mask: {selected_mask[0, 81:, :9].to(dtype=int)}")
-    #     torch.set_printoptions(profile="default")
-    #     print(f"largest_probs: {largest_probs[0, 81:]}")
-    #     print(f"num update tokens: {update_positions[0, 81:].sum().item()}")
-    #     print(f"num unmasked tokens: {(next_z_t[0, 81:] != tokenizer.mask_token_id).sum().item()}")
     return update_positions, next_z_t, max_score
 
 
@@ -459,9 +458,9 @@ def gidd_prob_to_recover_data(probs, z_t, t, s, i, diffusion_mask, tokenizer, no
 
 
 def get_sampling_strategy_class(config, model, noise_schedule, tokenizer, t_eps, min_p):
-    match config.sampling.strategy:
+    match config.strategy:
         case "gidd_prob_to_recover_data":
-            return Gidd_prob_to_recover_data(config.sampling.p_denoise, model, noise_schedule, tokenizer, t_eps, config.sampling.k, get_self_correction(config))
+            return Gidd_prob_to_recover_data(config.p_denoise, model, noise_schedule, tokenizer, t_eps, config.k, get_self_correction(config))
         case "gidd_flattened":
             return Gidd_flattened(model, noise_schedule, tokenizer, t_eps, get_sampling_strategy(config, tokenizer, noise_schedule, min_p), get_self_correction(config))
         case _:
@@ -485,6 +484,12 @@ class SamplingStrategy(nn.Module):
         self.num_self_correction_steps = num_self_correction_steps
         self.max_length = max_length
         self.device = device
+        # State which is updated throughout sampling
+        self.z_t = self.initial_z_t.clone()
+        self.p_zs_x = torch.zeros_like(self.initial_z_t, dtype=torch.float, device=device)
+        self.p_zs_x_mean_EMA = torch.zeros((self.initial_z_t.shape[0]), dtype=torch.float, device=device)
+        self.is_fully_denoised = torch.zeros(self.initial_z_t.shape[0], dtype=torch.bool, device=device)
+        self.has_self_corrected = False
 
     @abstractmethod
     @torch.no_grad()
@@ -493,8 +498,92 @@ class SamplingStrategy(nn.Module):
     
     @abstractmethod
     @torch.no_grad()
-    def step(self, i, generation_info_handler):
+    def step(self, i, generation_info_handler, blocked_logits_mask=None):
         raise NotImplementedError
+    
+    def infer_time_step(self):
+        p_zs_x_mean = mean_over_diffusion_positions(self.p_zs_x, self.diffusion_mask)
+        p_zs_x_mean_EMA_weight = 0.8
+        self.p_zs_x_mean_EMA = p_zs_x_mean_EMA_weight * self.p_zs_x_mean_EMA + (1 - p_zs_x_mean_EMA_weight) * p_zs_x_mean
+        current_ts = 1 - self.p_zs_x_mean_EMA.unsqueeze(-1).expand(-1, self.ts.shape[0])
+        current_ts = (1 - 2 * self.t_eps) * current_ts + self.t_eps
+        current_ts_indices = (current_ts - self.ts.squeeze(-1)).abs().argmin(-1)
+        t = self.ts[current_ts_indices].squeeze(-1)
+        s = self.ts[torch.maximum(current_ts_indices - 1, torch.zeros_like(current_ts_indices))].squeeze(-1)
+        return t, s
+    
+    def get_state(self):
+        return {
+            'z_t': self.z_t.clone(),
+            'p_zs_x': self.p_zs_x.clone(),
+            'p_zs_x_mean_EMA': self.p_zs_x_mean_EMA.clone(),
+            'is_fully_denoised': self.is_fully_denoised.clone(),
+            'has_self_corrected': self.has_self_corrected
+        }
+    
+    def set_state(self, beam):
+        self.z_t = beam['z_t'].clone()
+        self.p_zs_x = beam['p_zs_x'].clone()
+        self.p_zs_x_mean_EMA = beam['p_zs_x_mean_EMA'].clone()
+        self.is_fully_denoised = beam['is_fully_denoised'].clone()
+        self.has_self_corrected = beam['has_self_corrected']
+
+    def branch_step(self, beam, branching_factor, generation_info_handler=None):
+        new_beams = []
+        blocked_logits_mask = torch.zeros((beam['z_t'].shape[0], beam['z_t'].shape[1], self.tokenizer.mask_token_id), dtype=torch.bool, device=self.device)
+        original_z_t = beam['z_t']
+        for _ in range(branching_factor):
+            self.set_state(beam)
+            self.step(beam['step'], generation_info_handler=generation_info_handler, blocked_logits_mask=blocked_logits_mask)
+            new_beam = self.get_state()
+            new_beams.append(new_beam)
+            # update blocked_logits_mask
+            new_z_t = new_beam['z_t']
+            updated_positions = (original_z_t != new_z_t)
+            for sample_idx in range(original_z_t.shape[0]):
+                for position_idx in range(original_z_t.shape[1]):
+                    if updated_positions[sample_idx, position_idx]:
+                        new_value = new_z_t[sample_idx, position_idx].item()
+                        blocked_logits_mask[sample_idx, position_idx, new_value] = 1
+        return new_beams
+
+    def beam_score(self, beam, score_time='t_zero', score_method='avg', generation_info_handler=None): # shape of z_t: (batch_size=1, seq_len)
+        if generation_info_handler is not None:
+            generation_info_handler.beam_search_forward_calls_step()
+        self.set_state(beam)
+        if score_time == 'inferred':
+            t, _ = self.infer_time_step()
+        else:
+            t = self.ts[0]
+        logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
+        logits[..., self.tokenizer.mask_token_id:] = -1e6
+        probs = logits.softmax(-1)
+        p_zt_x = probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
+        if score_method == 'avg':
+            p_zt_x_mean = mean_over_diffusion_positions(p_zt_x, self.diffusion_mask)
+            return p_zt_x_mean.squeeze(0).item()
+        elif score_method == 'min':
+            p_zt_x = torch.where(torch.logical_and(self.diffusion_mask.to(dtype=bool), self.z_t != self.tokenizer.mask_token_id), p_zt_x, 1)
+            min_p_zt_x = torch.min(p_zt_x, dim=-1).values
+            return min_p_zt_x.squeeze(0).item()
+     
+    def beam_score_final(self, beam, generation_info_handler=None): # shape of z_t: (batch_size=1, seq_len)
+        if generation_info_handler is not None:
+            generation_info_handler.beam_search_forward_calls_step()
+        z_t = beam['z_t']
+        logits = self.model(z_t, self.ts[0], puzzle_conditioning=self.puzzle_conditioning)
+        logits[..., self.tokenizer.mask_token_id:] = -1e6
+        probs = logits.softmax(-1)
+        p_zt_x = probs.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
+        p_zt_x = torch.where(self.diffusion_mask.to(dtype=bool), p_zt_x, 1)
+        min_p_zt_x = torch.min(p_zt_x, dim=-1).values
+        return min_p_zt_x.squeeze(0).item()
+    
+    def beam_score_final_accepted(self, beam, generation_info_handler=None):
+        score = self.beam_score_final(beam, generation_info_handler=generation_info_handler)
+        # if score >= 0.9995:
+        #     print(f'Final beam min p_zt_x: {score} ACCEPTED')
+        return score >= 0.9995
 
 
 class Gidd_independent_steps(SamplingStrategy):
@@ -508,42 +597,27 @@ class Gidd_independent_steps(SamplingStrategy):
         super().initialize(initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device)
         self.ts = torch.linspace(0, 1, self.num_denoising_steps + 1, device=device).unsqueeze(-1)
         self.ts = (1 - 2 * self.t_eps) * self.ts + self.t_eps
-        self.z_t = self.initial_z_t.clone()
-        self.p_zs_x = torch.zeros_like(self.initial_z_t, dtype=torch.float, device=device)
-        self.p_zs_x_mean_EMA = torch.zeros((self.initial_z_t.shape[0]), dtype=torch.float, device=device)
-        self.is_fully_unmasked = torch.zeros(self.initial_z_t.shape[0], dtype=torch.bool, device=device)
-        self.has_self_corrected = False
     
     def stopping_criterion(self, i, generation_info_handler):
         if i < self.num_denoising_steps:
-            stopping_criteria_met = self.is_fully_unmasked.all() and self.self_correction is None
+            stopping_criteria_met = self.is_fully_denoised.all() and self.self_correction is None
             if generation_info_handler is not None and stopping_criteria_met:
                     generation_info_handler.batch_step_history(self.z_t)
                     generation_info_handler.batch_step_marginals_final(self.z_t)
             return stopping_criteria_met
         else:
             return self.self_correction is None or self.has_self_corrected
-        
-    def infer_time_step(self):
-        p_zs_x_mean = mean_over_diffusion_positions(self.p_zs_x, self.diffusion_mask)
-        p_zs_x_mean_EMA_weight = 0.8
-        self.p_zs_x_mean_EMA = p_zs_x_mean_EMA_weight * self.p_zs_x_mean_EMA + (1 - p_zs_x_mean_EMA_weight) * p_zs_x_mean
-        current_ts = 1 - self.p_zs_x_mean_EMA.unsqueeze(-1).expand(-1, self.ts.shape[0])
-        current_ts = (1 - 2 * self.t_eps) * current_ts + self.t_eps
-        current_ts_indices = (current_ts - self.ts.squeeze(-1)).abs().argmin(-1)
-        t = self.ts[current_ts_indices].squeeze(-1)
-        s = self.ts[torch.maximum(current_ts_indices - 1, torch.zeros_like(current_ts_indices))].squeeze(-1)
-        return t, s
     
-    def step(self, i, generation_info_handler):
+    def step(self, i, generation_info_handler, blocked_logits_mask=None):
         if i < self.num_denoising_steps:
-            self.is_fully_unmasked = (self.z_t[:, -self.max_length:] != self.tokenizer.mask_token_id).all(dim=1)
-            if self.is_fully_unmasked.all():
+            self.is_fully_denoised = (self.z_t[:, -self.max_length:] != self.tokenizer.mask_token_id).all(dim=1)
+            if self.is_fully_denoised.all():
                 return
             if generation_info_handler is not None:
-                generation_info_handler.batch_step_forward_calls(self.is_fully_unmasked)
-            time_steps = 'fixed'
-            # time_steps = 'inferred'
+                generation_info_handler.batch_step_forward_calls(self.is_fully_denoised)
+                generation_info_handler.beam_search_forward_calls_step()
+            # time_steps = 'fixed'
+            time_steps = 'inferred'
             if time_steps == 'fixed':
                 t = self.ts[self.num_denoising_steps - 1 - i]
                 s = self.ts[max(0, self.num_denoising_steps - 2 - i)]
@@ -552,11 +626,13 @@ class Gidd_independent_steps(SamplingStrategy):
             logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
             logits[..., self.tokenizer.mask_token_id:] = -1e6
             probs = logits.softmax(-1)
+            if blocked_logits_mask is not None:
+                probs[..., :self.tokenizer.mask_token_id] = torch.where(blocked_logits_mask, 0, probs[..., :self.tokenizer.mask_token_id])
 
             update_positions, next_z_t = self.sampling_strategy(probs, self.z_t, t, s, self.num_denoising_steps - 1 - i, self.diffusion_mask)
 
             update_positions = update_positions * self.diffusion_mask
-            update_positions = update_positions & ~self.is_fully_unmasked.unsqueeze(-1)
+            update_positions = update_positions & ~self.is_fully_denoised.unsqueeze(-1)
             
             if generation_info_handler is not None:
                 generation_info_handler.batch_step_history(self.z_t)
@@ -577,7 +653,7 @@ class Gidd_independent_steps(SamplingStrategy):
                     generation_info_handler.batch_step_marginals(self.z_t, p_zt_x, s, self.tokenizer.mask_token_id)
                 generation_info_handler.batch_step_change_events(i, self.z_t, probs, self.tokenizer.mask_token_id)
 
-                if generation_info_handler.getattr(self, "collect_confidence_t_0", False):
+                if getattr(generation_info_handler, "collect_confidence_t_0", False):
                     logits = self.model(self.z_t, self.ts[0], puzzle_conditioning=self.puzzle_conditioning)
                     logits[..., self.tokenizer.mask_token_id:] = -1e6
                     probs = logits.softmax(-1)
@@ -629,19 +705,19 @@ class Gidd_flattened(SamplingStrategy):
         self.ts = (1 - 2 * self.t_eps) * self.ts + self.t_eps
         self.z_t = self.initial_z_t.clone()
         self.max_score = torch.zeros_like(self.z_t, dtype=torch.float, device=device)
-        self.is_fully_unmasked = torch.zeros(self.initial_z_t.shape[0], dtype=torch.bool, device=device)
+        self.is_fully_denoised = torch.zeros(self.initial_z_t.shape[0], dtype=torch.bool, device=device)
         self.has_self_corrected = False
     
     def stopping_criterion(self, i, generation_info_handler):
         if i < self.num_denoising_steps:
-            return self.is_fully_unmasked.all() and self.self_correction is None
+            return self.is_fully_denoised.all() and self.self_correction is None
         else:
             return self.self_correction is None or self.has_self_corrected
         
     def step(self, i, generation_info_handler):
         if i < self.num_denoising_steps:
-            self.is_fully_unmasked = (self.z_t[:, -self.max_length:] != self.tokenizer.mask_token_id).all(dim=1)
-            if self.is_fully_unmasked.all():
+            self.is_fully_denoised = (self.z_t[:, -self.max_length:] != self.tokenizer.mask_token_id).all(dim=1)
+            if self.is_fully_denoised.all():
                 return
             t = self.ts[self.num_denoising_steps - 1 - i]
             s = self.ts[max(0, self.num_denoising_steps - 2 - i)]
@@ -652,7 +728,7 @@ class Gidd_flattened(SamplingStrategy):
             update_positions, next_z_t, self.max_score = self.sampling_strategy(probs, self.z_t, t, s, self.num_denoising_steps - 1 - i, self.num_denoising_steps, self.diffusion_mask, self.max_score)
 
             update_positions = update_positions * self.diffusion_mask
-            update_positions = update_positions & ~self.is_fully_unmasked.unsqueeze(-1)
+            update_positions = update_positions & ~self.is_fully_denoised.unsqueeze(-1)
             self.z_t = torch.where(update_positions.bool(), next_z_t, self.z_t)
         elif self.self_correction is not None and not self.has_self_corrected:
             # TODO: change self-correction code to update one step at a time, such that history can be collected easily
@@ -674,12 +750,6 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
         self.ts = (1 - 2 * self.t_eps) * self.ts + self.t_eps
         self.not_mask_token_id_tensor = torch.ones((1, 1), dtype=initial_z_t.dtype, device=device) * self.noise_schedule.not_mask_id
         self.mask_token_id_tensor = torch.ones((1, 1), dtype=initial_z_t.dtype, device=device) * self.tokenizer.mask_token_id
-        # State which is updated throughout sampling
-        self.z_t = self.initial_z_t.clone()
-        self.p_zs_x = torch.zeros_like(self.initial_z_t, dtype=torch.float, device=device)
-        self.p_zs_x_mean_EMA = torch.zeros((self.initial_z_t.shape[0]), dtype=torch.float, device=device)
-        self.is_fully_denoised = torch.zeros(self.initial_z_t.shape[0], dtype=torch.bool, device=device)
-        self.has_self_corrected = False
 
     def stopping_criterion(self, i, generation_info_handler):
         if i < self.num_denoising_steps:
@@ -689,17 +759,6 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
             return stopping_criteria_met
         else:
             return self.self_correction is None or self.has_self_corrected
-    
-    def infer_time_step(self):
-        p_zs_x_mean = mean_over_diffusion_positions(self.p_zs_x, self.diffusion_mask)
-        p_zs_x_mean_EMA_weight = 0.8
-        self.p_zs_x_mean_EMA = p_zs_x_mean_EMA_weight * self.p_zs_x_mean_EMA + (1 - p_zs_x_mean_EMA_weight) * p_zs_x_mean
-        current_ts = 1 - self.p_zs_x_mean_EMA.unsqueeze(-1).expand(-1, self.ts.shape[0])
-        current_ts = (1 - 2 * self.t_eps) * current_ts + self.t_eps
-        current_ts_indices = (current_ts - self.ts.squeeze(-1)).abs().argmin(-1)
-        t = self.ts[current_ts_indices].squeeze(-1)
-        s = self.ts[torch.maximum(current_ts_indices - 1, torch.zeros_like(current_ts_indices))].squeeze(-1)
-        return t, s
 
     def step(self, i, generation_info_handler, blocked_logits_mask=None):
         if i < self.num_denoising_steps:
@@ -707,6 +766,7 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                 return
             if generation_info_handler is not None:
                 generation_info_handler.batch_step_forward_calls(self.is_fully_denoised)
+                generation_info_handler.beam_search_forward_calls_step()
             # time_steps = 'fixed'
             time_steps = 'inferred'
             if time_steps == 'fixed':
@@ -844,13 +904,6 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                         # if i % 10 == 0:
                         #     print(f"i: {i}, ks: {ks}")
                         update_positions = sample_position_top_variable_k(metric, ks)
-                    # k = 1
-                    # if self.config.position_metric == "p_denoise":
-                    #     update_positions = sample_position_top_k_gumbel(p_zs_x_and_zt_nx * updatable_positions, k, 0) # select positions with top-k probabilities to have a denoising event
-                    # elif self.config.position_metric == "confident_and_p_denoise":
-                    #     update_positions = sample_position_top_k_gumbel(probs.max(-1).values * p_zs_x_and_zt_nx * updatable_positions, k, 0)
-                    # elif self.config.position_metric == "confident_and_noisy":
-                    #     update_positions = sample_position_top_k_gumbel(probs.max(-1).values * (1 - p_zt_x) * updatable_positions, k, 0)
 
                 # update selected positions
                 if self.config.token_sampling == "categorical":
@@ -943,71 +996,3 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
             if generation_info_handler is not None:
                 generation_info_handler.batch_step_history(self.z_t)
     
-    def get_state(self):
-        return {
-            'z_t': self.z_t.clone(),
-            'p_zs_x': self.p_zs_x.clone(),
-            'p_zs_x_mean_EMA': self.p_zs_x_mean_EMA.clone(),
-            'is_fully_denoised': self.is_fully_denoised.clone(),
-            'has_self_corrected': self.has_self_corrected
-        }
-    
-    def set_state(self, beam):
-        self.z_t = beam['z_t'].clone()
-        self.p_zs_x = beam['p_zs_x'].clone()
-        self.p_zs_x_mean_EMA = beam['p_zs_x_mean_EMA'].clone()
-        self.is_fully_denoised = beam['is_fully_denoised'].clone()
-        self.has_self_corrected = beam['has_self_corrected']
-
-    def branch_step(self, beam, branching_factor):
-        new_beams = []
-        blocked_logits_mask = torch.zeros((beam['z_t'].shape[0], beam['z_t'].shape[1], self.tokenizer.mask_token_id), dtype=torch.bool, device=self.device)
-        original_z_t = beam['z_t']
-        for _ in range(branching_factor):
-            self.set_state(beam)
-            self.step(beam['step'], None, blocked_logits_mask=blocked_logits_mask)
-            new_beam = self.get_state()
-            new_beams.append(new_beam)
-            # update blocked_logits_mask
-            new_z_t = new_beam['z_t']
-            updated_positions = (original_z_t != new_z_t)
-            for sample_idx in range(original_z_t.shape[0]):
-                for position_idx in range(original_z_t.shape[1]):
-                    if updated_positions[sample_idx, position_idx]:
-                        new_value = new_z_t[sample_idx, position_idx].item()
-                        blocked_logits_mask[sample_idx, position_idx, new_value] = 1
-        return new_beams
-
-    def beam_score(self, beam, score_time='t_zero', score_method='avg'): # shape of z_t: (batch_size=1, seq_len)
-        self.set_state(beam)
-        if score_time == 'inferred':
-            t, _ = self.infer_time_step()
-        else:
-            t = self.ts[0]
-        logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
-        logits[..., self.tokenizer.mask_token_id:] = -1e6
-        probs = logits.softmax(-1)
-        p_zt_x = probs.gather(-1, self.z_t.unsqueeze(-1)).squeeze(-1)
-        if score_method == 'avg':
-            p_zt_x_mean = mean_over_diffusion_positions(p_zt_x, self.diffusion_mask)
-            return p_zt_x_mean.squeeze(0).item()
-        elif score_method == 'min':
-            p_zt_x = torch.where(torch.logical_and(self.diffusion_mask.to(dtype=bool), self.z_t != self.tokenizer.mask_token_id), p_zt_x, 1)
-            min_p_zt_x = torch.min(p_zt_x, dim=-1).values
-            return min_p_zt_x.squeeze(0).item()
-     
-    def beam_score_final(self, beam): # shape of z_t: (batch_size=1, seq_len)
-        z_t = beam['z_t']
-        logits = self.model(z_t, self.ts[0], puzzle_conditioning=self.puzzle_conditioning)
-        logits[..., self.tokenizer.mask_token_id:] = -1e6
-        probs = logits.softmax(-1)
-        p_zt_x = probs.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
-        p_zt_x = torch.where(self.diffusion_mask.to(dtype=bool), p_zt_x, 1)
-        min_p_zt_x = torch.min(p_zt_x, dim=-1).values
-        return min_p_zt_x.squeeze(0).item()
-    
-    def beam_score_final_accepted(self, beam):
-        score = self.beam_score_final(beam)
-        if score >= 0.9995:
-            print(f'Final beam min p_zt_x: {score} ACCEPTED')
-        return score >= 0.9995

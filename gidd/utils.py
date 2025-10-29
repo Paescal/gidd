@@ -363,8 +363,8 @@ def score_sudoku(samples_tokenized, diffusion_mask, solutions_tokenized, tokeniz
     fully_correct_samples_fraction = torch.mean((cells_score == (seq_len)).float())
     if fully_correct_samples_fraction is None:
         print("fully_correct_samples_fraction is None")
-    elif fully_correct_samples_fraction == 0:
-        print("No fully correct samples found.")
+    # elif fully_correct_samples_fraction == 0:
+    #     print("No fully correct samples found.")
 
     samples_decoded = np.array([tokenizer.decode(samples_tokenized[i], skip_special_tokens=False, clean_up_tokenization_spaces=False).split() for i in range(num_samples)])
     samples_decoded = samples_decoded.reshape((-1, sudoku_size, sudoku_size))
