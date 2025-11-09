@@ -50,7 +50,6 @@ class GenerationInfoHandler:
             self.collect_beam_search_branch_correctness = True
             self.beam_search_branch_correctness = []
             self.num_correct_before_initial_branch = 0
-            self.num_samples = 0
 
     def batch_initialize(self, initial_z_t, diffusion_mask, solution, device):
         self.batch_size = initial_z_t.shape[0]
@@ -84,6 +83,8 @@ class GenerationInfoHandler:
             self.batch_forward_calls_by_sample = torch.zeros(self.batch_size, dtype=torch.int, device=device)
         if getattr(self, "collect_beam_search_forward_calls", False):
             self.batch_beam_search_forward_calls = 0
+        if getattr(self, "collect_beam_search_branch_correctness", False):
+            self.batch_beam_search_branch_correctness = []
             
     
     def batch_step_history(self, z_t):
@@ -123,8 +124,9 @@ class GenerationInfoHandler:
             self.batch_total_accuracy.append(total_accuracy_by_sample.sum().item())
     
     def batch_step_marginals_final(self, z_t):
-        cell_accuracy_by_sample = ((z_t == self.batch_solution) * self.diffusion_mask).sum(dim=-1) / self.num_diffusion_positions_by_sample
-        self.batch_cell_accuracy.append(cell_accuracy_by_sample)
+        if getattr(self, "collect_marginals", False):
+            cell_accuracy_by_sample = ((z_t == self.batch_solution) * self.diffusion_mask).sum(dim=-1) / self.num_diffusion_positions_by_sample
+            self.batch_cell_accuracy.append(cell_accuracy_by_sample)
 
     def batch_step_change_events(self, step, new_z_t, probs, mask_token_id):
         def get_change_event_type(old_value, new_value, true_value, mask_token_id):
@@ -200,11 +202,10 @@ class GenerationInfoHandler:
         if getattr(self, "collect_beam_search_branch_correctness", False):
             if is_correct:
                 self.num_correct_before_initial_branch += 1
-            self.num_samples += 1
     
     def beam_search_branch_correctness_step(self, denoising_progress, num_correct_before_pruning: int, num_incorrect_before_pruning: int, num_correct_after_pruning: int, num_incorrect_after_pruning: int):
         if getattr(self, "collect_beam_search_branch_correctness", False):
-            self.beam_search_branch_correctness.append({
+            self.batch_beam_search_branch_correctness.append({
                 'denoising_progress': denoising_progress,
                 'num_correct_before_pruning': num_correct_before_pruning,
                 'num_incorrect_before_pruning': num_incorrect_before_pruning,
@@ -287,6 +288,8 @@ class GenerationInfoHandler:
                 self.forward_calls_by_batch.append(torch.max(self.batch_forward_calls_by_sample).item())
         if getattr(self, "collect_beam_search_forward_calls", False):
             self.beam_search_forward_calls.append(self.batch_beam_search_forward_calls)
+        if getattr(self, "collect_beam_search_branch_correctness", False):
+            self.beam_search_branch_correctness.append(self.batch_beam_search_branch_correctness)
 
     def get_history(self):
         if getattr(self, "collect_history", False):
@@ -354,7 +357,7 @@ class GenerationInfoHandler:
     def get_beam_search_branch_correctness(self):
         if getattr(self, "collect_beam_search_branch_correctness", False):
             return {
-                'beam_search_branch_correctness': torch.tensor(self.beam_search_branch_correctness), # list of dicts
+                'beam_search_branch_correctness': self.beam_search_branch_correctness, # list (num samples) of lists (num branching events) of dicts
                 'num_correct_before_initial_branch': self.num_correct_before_initial_branch,
                 'num_samples': self.num_samples,
             }

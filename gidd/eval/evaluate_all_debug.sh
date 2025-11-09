@@ -5,6 +5,20 @@ export OPENBLAS_NUM_THREADS=3
 export NUMEXPR_NUM_THREADS=3
 export VECLIB_MAXIMUM_THREADS=3
 
+# build_combinations_file=true
+build_combinations_file=false
+
+run_evaluation=true
+# run_evaluation=false
+
+if [ $build_combinations_file = true ]; then
+    combinations_file_name="combinations_debug.txt"
+    csv_file_name="results_debug.csv"
+else
+    combinations_file_name="combinations_reproduce.txt"
+    csv_file_name="results_reproduce.csv"
+fi
+
 num_jobs=8
 
 num_samples=6400
@@ -15,7 +29,7 @@ compile_torch=0
 
 beam_search=(
     false
-    true
+    # true
 )
 steps_before_pruning=(
     # "1"
@@ -27,7 +41,8 @@ steps_before_pruning=(
 )
 pruning_num_beams=(
     # "1"
-    "2"
+    # "2"
+    "4"
 )
 branching_factors=(
     # "2"
@@ -36,17 +51,24 @@ branching_factors=(
     # "8"
 )
 score_times=(
-    "t_zero"
-    # "inferred"
+    # "t_zero"
+    "inferred"
 )
 score_methods=(
     "avg"
-    # "min"
+    # "avg_unmasked"
+    # "avg_all_using_confidence_for_masked"
+    "min"
 )
 initiate_beam_search_after_progress=(
-    # "0.0"
-    "0.1"
+    "0.0"
+    # "0.1"
+    # "0.2"
+    # "0.3"
+    # "0.4"
     # "0.5"
+    # "0.6"
+    # "0.7"
 )
 seeds=(
     "1"
@@ -101,13 +123,18 @@ strategies=(
     # "gidd_emulate_mdlm_vanilla"
     # "gidd_emulate_mdlm_adaptive_score_select_update"
     # "gidd_original"
-    # "gidd_independent_positions_decomposed_update_distribution"
-    "gidd_selected_positions_decomposed_update_distribution"
-    "gidd_change_based_on_model_confidence_to_change"
-    "gidd_keep_where_confident"
-    "gidd_change_low_confidence_positions"
+    "gidd_independent_positions_decomposed_update_distribution"
+    # "gidd_selected_positions_decomposed_update_distribution" # only works with fixed time steps
+    # "gidd_change_based_on_model_confidence_to_change"
+    # "gidd_keep_where_confident"
+    # "gidd_change_low_confidence_positions"
+    # "gidd_change_lowest_confidence_position"
     # "gidd_flattened"
-    "gidd_prob_to_recover_data"
+    # "gidd_prob_to_recover_data"
+)
+time_steps=(
+    "fixed"
+    # "inferred"
 )
 score_mask_positions=(
     "MDM_max"
@@ -157,22 +184,23 @@ self_correction_strategies=(
 )
 oracles=(
     # "perfect"
-    # "model"
+    "model"
     # "recurrence"
     # "model_and_recurrence"
     "model_EMA"
 )
 position_sampling_strategies=(
-    # "independent"
-    "top_k"
+    "independent"
+    # "top_k"
 )
 position_metric_strategies=(
     # "p_denoise"
-    # "confident_and_p_denoise"
+    "confident_and_p_denoise"
     # "confident_and_noisy"
     "margin_and_noisy"
-    # "noisy"
+    "noisy"
     # "confident"
+    "margin"
 )
 token_sampling_strategies=(
     # "categorical"
@@ -188,8 +216,8 @@ uniform_noise_strategies=(
 output_dir="$( dirname "${BASH_SOURCE[0]}" )/../../outputs/evaluate_all"
 mkdir -p "$output_dir"
 output_dir="$( cd $output_dir && pwd )"
-combinations_file="$output_dir/combinations_debug.txt"
-csv_file="$output_dir/results_debug.csv"
+combinations_file="$output_dir/$combinations_file_name"
+csv_file="$output_dir/$csv_file_name"
 
 # Function to process checkpoints with given suffix
 process_checkpoints() {
@@ -370,6 +398,25 @@ process_checkpoints() {
                 fi
             fi
 
+            # gidd_change_lowest_confidence_position
+            if [[ " ${strategies[@]} " =~ " gidd_change_lowest_confidence_position " ]]; then
+                if (( $(echo "$noise > 0" | bc -l) )); then
+                    for score_mask_position in "${score_mask_positions[@]}"; do
+                        for select_position_unmask in "${select_positions[@]}"; do
+                            if [ "$select_position_unmask" = "top_k_gumbel" ]; then
+                                for k in "${ks[@]}"; do
+                                    for gn in "${gumbel_noise_coefficients[@]}"; do
+                                        for unmask_token in "${unmask_tokens[@]}"; do
+                                            echo "$ckpt,gidd_change_lowest_confidence_position,score_mask_position=$score_mask_position select_position_unmask=$select_position_unmask unmask_token=$unmask_token k=$k gumbel_noise_coefficient=$gn $suffix" >> $combinations_file
+                                        done
+                                    done
+                                done
+                            fi
+                        done
+                    done
+                fi
+            fi
+
             # gidd_change_based_on_model_confidence_to_change
             # For each position, compute the score as confidence of the model on any token that is different from the current token.
             # Based on the scores of the positions, select a subset of positions to update.
@@ -480,48 +527,57 @@ process_checkpoints() {
     done
 }
 
-build_combinations_file=true
 if [ $build_combinations_file = true ]; then
     > $combinations_file
     for seed in "${seeds[@]}"; do
         for dataset in "${datasets[@]}"; do
             for num_denoising_steps in "${nums_denoising_steps[@]}"; do
                 for num_self_correction_steps in "${nums_self_correction_steps[@]}"; do
-                    for do_beam_search in "${beam_search[@]}"; do
-                        if [ "$do_beam_search" = "true" ]; then
-                            current_batch_size=1
-                            general_suffix="dataset=${dataset} num_samples=$num_samples num_denoising_steps=$num_denoising_steps num_self_correction_steps=$num_self_correction_steps batch_size=$current_batch_size min_p=$min_p compile_torch=$compile_torch seed=$seed"
-                            for num_steps_before_pruning in "${steps_before_pruning[@]}"; do
-                                for num_pruning_beams in "${pruning_num_beams[@]}"; do
-                                    for branching_factor in "${branching_factors[@]}"; do
-                                        for score_time in "${score_times[@]}"; do
-                                            for score_method in "${score_methods[@]}"; do
-                                                for initiate_after in "${initiate_beam_search_after_progress[@]}"; do
-                                                    beam_search_suffix="do_beam_search=true steps_before_pruning=$num_steps_before_pruning pruning_num_beams=$num_pruning_beams branching_factor=$branching_factor score_time=$score_time score_method=$score_method initiate_beam_search_after_progress=$initiate_after"
-                                                    suffix="$general_suffix $beam_search_suffix"
-                                                    process_checkpoints "$suffix"
+                    for time_step in "${time_steps[@]}"; do
+                        for do_beam_search in "${beam_search[@]}"; do
+                            if [ "$do_beam_search" = "true" ]; then
+                                current_batch_size=1
+                                general_suffix="dataset=${dataset} num_samples=$num_samples num_denoising_steps=$num_denoising_steps num_self_correction_steps=$num_self_correction_steps time_steps=$time_step batch_size=$current_batch_size min_p=$min_p compile_torch=$compile_torch seed=$seed"
+                                for num_steps_before_pruning in "${steps_before_pruning[@]}"; do
+                                    for num_pruning_beams in "${pruning_num_beams[@]}"; do
+                                        for branching_factor in "${branching_factors[@]}"; do
+                                            for score_time in "${score_times[@]}"; do
+                                                for score_method in "${score_methods[@]}"; do
+                                                    for initiate_after in "${initiate_beam_search_after_progress[@]}"; do
+                                                        beam_search_suffix="do_beam_search=true steps_before_pruning=$num_steps_before_pruning pruning_num_beams=$num_pruning_beams branching_factor=$branching_factor score_time=$score_time score_method=$score_method initiate_beam_search_after_progress=$initiate_after"
+                                                        suffix="$general_suffix $beam_search_suffix"
+                                                        process_checkpoints "$suffix"
+                                                    done
                                                 done
                                             done
                                         done
                                     done
                                 done
-                            done
-                        else
-                            current_batch_size=$batch_size
-                            general_suffix="dataset=${dataset} num_samples=$num_samples num_denoising_steps=$num_denoising_steps num_self_correction_steps=$num_self_correction_steps batch_size=$current_batch_size min_p=$min_p compile_torch=$compile_torch seed=$seed"
-                            beam_search_suffix="do_beam_search=false"
-                            suffix="$general_suffix $beam_search_suffix"
-                            process_checkpoints "$suffix"
-                        fi
+                            else
+                                current_batch_size=$batch_size
+                                general_suffix="dataset=${dataset} num_samples=$num_samples num_denoising_steps=$num_denoising_steps num_self_correction_steps=$num_self_correction_steps time_steps=$time_step batch_size=$current_batch_size min_p=$min_p compile_torch=$compile_torch seed=$seed"
+                                beam_search_suffix="do_beam_search=false"
+                                suffix="$general_suffix $beam_search_suffix"
+                                process_checkpoints "$suffix"
+                            fi
+                        done
                     done
                 done
             done
         done
     done
+    echo "Combinations file created at $combinations_file"
+else
+    echo "Using existing combinations file at $combinations_file"
 fi
 # cat $combinations_file
 
-echo "accuracy,correctly_filled_cells,not_fully_unmasked,checkpoint,strategy,params,true_denoised_fraction,denoised_fraction,mask_fraction,uniform_fraction,history" > $csv_file
+if [ $run_evaluation = false ]; then
+    echo "Evaluation not run. Set run_evaluation=true to run evaluation."
+    exit 0
+fi
+
+echo "accuracy,correctly_filled_cells,nfe,time,speed,not_fully_unmasked,checkpoint,strategy,params" > $csv_file
 
 evaluate_one_py="$( cd $( dirname "${BASH_SOURCE[0]}" ) && pwd )/evaluate_one.py"
 export evaluate_one_py
@@ -556,14 +612,11 @@ cat $combinations_file | parallel --colsep ',' -j $num_jobs '
     OUTPUT=$(CUDA_VISIBLE_DEVICES=$GPU $CMD)
     ACCURACY=$(echo "$OUTPUT" | grep -oP "accuracy=\K[0-9.]+")
     CORRECTLY_FILLED_CELLS=$(echo "$OUTPUT" | grep -oP "correctly_filled_cells=\K[0-9.]+")
+    NFE=$(echo "$OUTPUT" | grep -oP "NFE: \K[0-9.]+")
+    TIME=$(echo "$OUTPUT" | grep -oP "Time taken: \K[0-9.]+")
+    SPEED=$(echo "$OUTPUT" | grep -oP "Speed: \K[0-9.]+")
     NOT_FULLY_UNMASKED=$(echo "$OUTPUT" | grep -oP "not_fully_unmasked=\K[0-9.]+")
-    HISTORY=$(echo "$OUTPUT" | grep -oP "\"num_steps=[0-9]+ seq_len=[0-9]+ history=[0-9 ]+\"")
-    TRUE_DENOISED_FRACTION=$(echo "$OUTPUT" | grep -oP "\"true_denoised_fraction=[^\"]+\"")
-    DENOISED_FRACTION=$(echo "$OUTPUT" | grep -oP "\"denoised_fraction=[^\"]+\"")
-    MASK_FRACTION=$(echo "$OUTPUT" | grep -oP "\"mask_fraction=[^\"]+\"")
-    UNIFORM_FRACTION=$(echo "$OUTPUT" | grep -oP "\"uniform_fraction=[^\"]+\"")
-    # echo "$ACCURACY,$CORRECTLY_FILLED_CELLS,$NOT_FULLY_UNMASKED,$CKPT,$STRATEGY,\"$PARAMS_ORIGINAL\",$HISTORY" >> $csv_file
-    echo "$ACCURACY,$CORRECTLY_FILLED_CELLS,$NOT_FULLY_UNMASKED,$CKPT,$STRATEGY,\"$PARAMS_ORIGINAL\",$TRUE_DENOISED_FRACTION,$DENOISED_FRACTION,$MASK_FRACTION,$UNIFORM_FRACTION,$HISTORY" >> $csv_file
+    echo "$ACCURACY,$CORRECTLY_FILLED_CELLS,$NFE,$TIME,$SPEED,$NOT_FULLY_UNMASKED,$CKPT,$STRATEGY,\"$PARAMS_ORIGINAL\"" >> $csv_file
     echo "Output for line $(({#})):"
     echo "$OUTPUT"
 

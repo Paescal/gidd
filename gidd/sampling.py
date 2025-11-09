@@ -366,6 +366,7 @@ class GiddSampler_new(Sampler):
         initial_beam['steps_before_pruning'] = steps_before_pruning
         initial_beam['denoising_progress'] = 0 # number of tokens unmasked?
         initial_beam['step'] = 0
+        initial_beam['parent_score'] = 0
         beams.append(initial_beam)
         
         beam_search_complete = False
@@ -380,9 +381,9 @@ class GiddSampler_new(Sampler):
                         if generation_info_handler is not None:
                             generation_info_handler.batch_finalize()
                         return beam['z_t']
-                    elif beam['step'] >= max_num_steps:
-                        complete_beams.append(beam)
-                        continue
+                if beam['step'] >= max_num_steps:
+                    complete_beams.append(beam)
+                    continue
                 beam_search_complete = False
                 if beam['steps_before_pruning'] > 0:
                     ready_for_pruning = False
@@ -401,6 +402,8 @@ class GiddSampler_new(Sampler):
                         new_beam['steps_before_pruning'] = beam['steps_before_pruning'] - 1
                         new_beam['denoising_progress'] = torch.sum((new_beam['z_t'] != self.tokenizer.mask_token_id) * diffusion_mask).item()
                         new_beam['step'] = beam['step'] + 1
+                        # for scoring relative to parent:
+                        new_beam['parent_score'] = beam['parent_score']
                         if check_beam_correct(new_beam):
                             num_correct += 1
                     # print(f"Step {beam['step']}: branched into {len(new_beams)} beams, {num_correct} correct")
@@ -422,8 +425,10 @@ class GiddSampler_new(Sampler):
             if ready_for_pruning and not beam_search_complete:
                 pruned_last_iteration = True
                 # perform pruning
-                min_progress = min([beam['denoising_progress'] for beam in next_beams])
-                beams_to_prune = [beam for beam in next_beams if beam['denoising_progress'] == min_progress]
+                # min_progress = min([beam['denoising_progress'] for beam in next_beams])
+                # beams_to_prune = [beam for beam in next_beams if beam['denoising_progress'] == min_progress]
+                min_progress = min([beam['step'] for beam in next_beams])
+                beams_to_prune = [beam for beam in next_beams if beam['step'] == min_progress]
                 num_correct_before_pruning = [check_beam_correct(beam) for beam in beams_to_prune].count(True)
                 num_incorrect_before_pruning = len(beams_to_prune) - num_correct_before_pruning
                 if len(beams_to_prune) > pruning_num_beams:
@@ -432,6 +437,11 @@ class GiddSampler_new(Sampler):
                     for beam in beams_to_prune:
                         score = self.sampling_strategy.beam_score(beam, score_time, score_method, generation_info_handler)
                         beam_scores.append(score)
+                    # for scoring relative to parent:
+                    relative_beam_scores = [beam_scores[i] - beams_to_prune[i]['parent_score'] for i in range(len(beam_scores))]
+                    for i, beam in enumerate(beams_to_prune):
+                        beam['parent_score'] = beam_scores[i]
+                    beam_scores = relative_beam_scores
                     # select top pruning_num_beams beams
                     topk_indices = torch.topk(torch.tensor(beam_scores), k=min(pruning_num_beams, len(beams_to_prune))).indices.tolist()
                     pruned_beams = [beams_to_prune[i] for i in topk_indices]
@@ -453,9 +463,10 @@ class GiddSampler_new(Sampler):
                             'steps': [beam['step'] for beam in beams_to_prune],
                         })
                         # print(f'Step {beam["step"]}: pruned out all correct beams! beam scores: {beam_scores}, correct beam? {is_beam_correct}')
-                    generation_info_handler.beam_search_branch_correctness_step(min_progress / final_denoising_progress, num_correct_before_pruning, num_incorrect_before_pruning, num_correct_after_pruning, num_incorrect_after_pruning)
+                    generation_info_handler.beam_search_branch_correctness_step(min_progress, num_correct_before_pruning, num_incorrect_before_pruning, num_correct_after_pruning, num_incorrect_after_pruning)
                 # add pruned beams back to next_beams
-                next_beams = [beam for beam in next_beams if beam['denoising_progress'] != min_progress] + pruned_beams
+                # next_beams = [beam for beam in next_beams if beam['denoising_progress'] != min_progress] + pruned_beams
+                next_beams = [beam for beam in next_beams if beam['step'] != min_progress] + pruned_beams
                 # print(f"After pruning: {len(next_beams)} beams, {[(torch.logical_or(beam['z_t'] == solution, beam['z_t'] == self.tokenizer.mask_token_id) * diffusion_mask.bool()).sum().item() == torch.sum(diffusion_mask).item() for beam in next_beams].count(True)} correct")
             beams = next_beams
         # select best complete beam
@@ -580,7 +591,8 @@ def get_sampler(ckpt_config, model, tokenizer, noise_schedule: NoiseSchedule, sa
             # return GiddSampler(sampling_config, model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
             return GiddSampler_new(sampling_config, model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
         elif ckpt_config.model.diffusion_process == "mdlm":
-            return MDLMSampler(sampling_config, model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
+            return GiddSampler_new(sampling_config, model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
+            # return MDLMSampler(sampling_config, model, tokenizer, noise_schedule, t_eps=ckpt_config.model.t_eps, compile_step=compile_step, min_p=min_p)
         else:
             raise ValueError(f"Unsupported forward process: {ckpt_config.model.diffusion_process}")
     elif ckpt_config.model.type == "autoregressive":

@@ -5,6 +5,7 @@ import torch
 import numpy as np
 import os
 import csv
+import time
 
 from functools import partial
 from pathlib import Path
@@ -35,7 +36,8 @@ def namespace_to_dict(ns):
 
 def get_info_to_collect(strategy, beam_search_config: bool):
     if beam_search_config.do_beam_search == 'true':
-        return ["prune_correct", "beam_search_forward_calls", "beam_search_branch_correctness"]
+        # return ["prune_correct", "beam_search_forward_calls", "beam_search_branch_correctness"]
+        return ["prune_correct", "beam_search_forward_calls"]
     if strategy in ["mdlm_vanilla", "mdlm_adaptive_score_select_update"]:
         return ["history", "logits", "forward_calls"]
     elif strategy in ["gidd_prob_to_recover_data"]:
@@ -63,6 +65,7 @@ def main(sampling_config):
     model.eval()
     strategy_metrics = {}
     info_to_collect = get_info_to_collect(sampling_config.sampling_strategy.strategy, sampling_config.beam_search)
+    start_time = time.time()
     with tqdm.tqdm(total=sampling_config.general_sampling.num_samples, desc="Sampling", dynamic_ncols=True) as pbar:
         with torch.no_grad(), torch.autocast(device.type, dtype=dtype):
             data_loader = iter(data_loader)
@@ -94,13 +97,27 @@ def main(sampling_config):
                 for k, v in batch_metrics.items():
                     strategy_metrics[k] = strategy_metrics.get(k, 0) + v * bs
                 pbar.update(bs)
+    end_time = time.time()
+    time_taken = end_time - start_time
+    # TODO: measure time, add accuracy metrics to generation_info_handler meta info
     accuracy = strategy_metrics['correct_solution'].item() / sampling_config.general_sampling.num_samples
     correctly_filled_cells = strategy_metrics['correctly_filled_cells'].item() / sampling_config.general_sampling.num_samples
     not_fully_unmasked = strategy_metrics['not_fully_unmasked'].item() / sampling_config.general_sampling.num_samples
     print(f"accuracy={accuracy:.4f}")
     print(f"correctly_filled_cells={correctly_filled_cells:.4f}")
     print(f"not_fully_unmasked={not_fully_unmasked:.4f}")
-    
+    if sampling_config.beam_search.do_beam_search == 'true':
+        beam_search_fwd_calls = generation_info_handler.get_beam_search_forward_calls()
+        nfe = torch.mean(beam_search_fwd_calls.to(dtype=torch.float32)).item()
+        print(f"NFE: {nfe:.2f} forward calls per sample with beam search")
+    else:
+        forward_calls = generation_info_handler.get_forward_calls()["forward_calls_by_batch"].sum().item()
+        nfe = forward_calls / sampling_config.general_sampling.num_samples
+        print(f"NFE: {nfe:.2f} forward calls per sample")
+    print(f"Time taken: {time_taken:.0f} seconds for {sampling_config.general_sampling.num_samples} samples")
+    speed = sampling_config.general_sampling.num_samples / time_taken
+    print(f"Speed: {speed:.2f} samples/second")
+
     generation_info_handler.collect_history = "history" in info_to_collect
     generation_info_handler.collect_logits = "logits" in info_to_collect
     generation_info_handler.collect_confidence_t_0 = "confidence_t_0" in info_to_collect
@@ -108,7 +125,15 @@ def main(sampling_config):
     generation_info_handler.collect_change_events = "change_events" in info_to_collect
     generation_info_handler.collect_forward_calls = "forward_calls" in info_to_collect
     generation_info_handler.collect_prune_correct = "prune_correct" in info_to_collect
-    generation_info_handler.save_info(f"/local/home/prisold/gidd/outputs/generation_info/combination_{sampling_config.general_sampling.combinations_row}")
+    generation_info_handler.save_info(
+        f"/local/home/prisold/gidd/outputs/generation_info/combination_{sampling_config.general_sampling.combinations_row}",
+        meta={
+            "accuracy": accuracy,
+            "correctly_filled_cells": correctly_filled_cells,
+            "nfe": nfe,
+            "time_taken_s": time_taken,
+            "speed_samples_per_s": speed,
+        })
 
 
 if __name__ == "__main__":
@@ -128,6 +153,7 @@ if __name__ == "__main__":
 
     sampling_strategy_argument_group = parser.add_argument_group('Sampling arguments')
     sampling_strategy_argument_group.add_argument('--strategy', type=str, required=True, help='Sampling strategy to evaluate')
+    sampling_strategy_argument_group.add_argument('--time_steps', type=str, default='fixed', help='Fixed or inferred time steps')
     sampling_strategy_argument_group.add_argument('--score_mask_position', type=str, default=None, help='Scoring function for unmasking a position')
     sampling_strategy_argument_group.add_argument('--score_position_for_change', type=str, default=None, help='Scoring function for changing the token at a position')
     sampling_strategy_argument_group.add_argument('--select_position', type=str, default=None, help='Sampling strategy for selecting a position')
@@ -167,10 +193,11 @@ if __name__ == "__main__":
             "batch_size": args.batch_size,
             "min_p": args.min_p,
             "compile_torch": args.compile_torch,
-            "combinations_row": args.combinations_row
+            "combinations_row": args.combinations_row,
         },
         "sampling_strategy": {
             "strategy": args.strategy,
+            "time_steps": args.time_steps,
             "score_mask_position": args.score_mask_position,
             "score_position_for_change": args.score_position_for_change,
             "select_position": args.select_position,
@@ -187,7 +214,7 @@ if __name__ == "__main__":
                 "position_metric": args.position_metric,
                 "token_sampling": args.token_sampling,
                 "uniform_noise": args.uniform_noise,
-            }
+            },
         },
         "beam_search": {
             "do_beam_search": args.do_beam_search,
@@ -197,7 +224,7 @@ if __name__ == "__main__":
             "score_time": args.score_time,
             "score_method": args.score_method,
             "initiate_beam_search_after_progress": args.initiate_beam_search_after_progress,
-        }
+        },
     })
 
     main(sampling_config)

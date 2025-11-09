@@ -122,11 +122,13 @@ def get_sampling_strategy(config, tokenizer, noise_schedule=None, min_p=None):
                            unmask_token=get_unmask_token(config, tokenizer),)
         case "gidd_change_based_on_model_confidence_to_change":
             return partial(gidd_change_based_on_model_confidence_to_change,
+                           tokenizer=tokenizer,
                            score_position_for_change=get_score_position_for_change(config),
                            select_position=get_select_position(config),
                            change_token=get_change_token(config, tokenizer),)
         case "gidd_keep_where_confident":
             return partial(gidd_keep_where_confident,
+                           tokenizer=tokenizer,
                            score_position_for_keep_where_confident=get_score_position_for_keep_where_confident(config),
                            select_position=get_select_position(config),
                            change_token=get_change_token(config, tokenizer),)
@@ -137,16 +139,25 @@ def get_sampling_strategy(config, tokenizer, noise_schedule=None, min_p=None):
                            select_position_unmask=get_select_position(config, arg_name='select_position_unmask'),
                            change_token=get_change_token(config, tokenizer),
                            unmask_token=get_unmask_token(config, tokenizer),)
+        case "gidd_change_lowest_confidence_position":
+            return partial(gidd_change_lowest_confidence_position,
+                           tokenizer=tokenizer,
+                           score_mask_position=get_score_mask_position(config, tokenizer),
+                           select_position_unmask=get_select_position(config, arg_name='select_position_unmask'),
+                           unmask_token=get_unmask_token(config, tokenizer),
+                           k=config.k,)
         case "gidd_flattened":
             return partial(gidd_flattened,
                            tokenizer=tokenizer,)
 
 #################### MDLM sampling strategies ####################
+# code for when using GiddSampler_new for mdlm strategies
 @torch.no_grad()
-def mdlm_vanilla(probs, z_t, t, tm1, diffusion_mask, eps=1e-4, unmask_token=None):
+def mdlm_vanilla(probs, z_t, t, tm1, i, diffusion_mask, eps=1e-4, unmask_token=None):
     def get_sigmas(t, eps=1e-4):
-        dsigma = (1 - eps) / (1 - (1 - eps) * t.clip(eps, 1))
-        sigma = -torch.log1p(-(1 - eps) * t.clip(eps, 1))
+        dsigma = (1 - eps) / (1 - (1 - eps) * torch.clamp(t, eps, 1))
+        dsigma = (1 - eps) / (1 - (1 - eps) * torch.clamp(t, eps, 1))
+        sigma = -torch.log1p(-(1 - eps) * torch.clamp(t, eps, 1))
         return dsigma, sigma
     # In train for the worst paper, the vanilla inference uses alpha_s and alpha_t. move_chance_tm1 is equal to 1 - alpha_s, move_chance_t is equal to 1 - alpha_t
     # The weight (move_chance_t - move_chance_tm1) / move_chance_t is equal to the probability (alpha_s - alpha_t) / (1 - alpha_t) to select a token for unmasking
@@ -155,16 +166,43 @@ def mdlm_vanilla(probs, z_t, t, tm1, diffusion_mask, eps=1e-4, unmask_token=None
     move_chance_t = 1 - torch.exp(-sigma_t)
     move_chance_tm1 = 1 - torch.exp(-sigma_tm1)
     prob_unmask_this_step = (move_chance_t - move_chance_tm1) / move_chance_t
-    update_positions = sample_positions_independently(z_t, prob_unmask_this_step)
+    update_positions = sample_positions_independently(z_t, prob_unmask_this_step.unsqueeze(-1))
     z_tm1 = unmask_token(probs)
     return update_positions, z_tm1
 
 @torch.no_grad()
-def mdlm_adaptive_score_select_update(probs, z_t, t, tm1, diffusion_mask, eps=1e-4, score_mask_position=None, select_position=None, unmask_token=None):
+def mdlm_adaptive_score_select_update(probs, z_t, t, tm1, i, diffusion_mask, eps=1e-4, score_mask_position=None, select_position=None, unmask_token=None):
     score = score_mask_position(z_t, probs) * diffusion_mask
     update_positions = select_position(score)
     z_tm1 = unmask_token(probs)
     return update_positions, z_tm1
+
+# code for when using MDLMSampler for mdlm strategies
+# @torch.no_grad()
+# def mdlm_vanilla(probs, z_t, t, tm1, diffusion_mask, eps=1e-4, unmask_token=None):
+#     def get_sigmas(t, eps=1e-4):
+#         dsigma = (1 - eps) / (1 - (1 - eps) * t.clip(eps, 1))
+#         print(f'dsigma: {dsigma}')
+#         sigma = -torch.log1p(-(1 - eps) * t.clip(eps, 1))
+#         return dsigma, sigma
+#     # In train for the worst paper, the vanilla inference uses alpha_s and alpha_t. move_chance_tm1 is equal to 1 - alpha_s, move_chance_t is equal to 1 - alpha_t
+#     # The weight (move_chance_t - move_chance_tm1) / move_chance_t is equal to the probability (alpha_s - alpha_t) / (1 - alpha_t) to select a token for unmasking
+#     _, sigma_t = get_sigmas(t, eps=eps)
+#     _, sigma_tm1 = get_sigmas(tm1, eps=eps)
+#     # print(f'sigma_t: {sigma_t}')
+#     move_chance_t = 1 - torch.exp(-sigma_t)
+#     move_chance_tm1 = 1 - torch.exp(-sigma_tm1)
+#     prob_unmask_this_step = (move_chance_t - move_chance_tm1) / move_chance_t
+#     update_positions = sample_positions_independently(z_t, prob_unmask_this_step)
+#     z_tm1 = unmask_token(probs)
+#     return update_positions, z_tm1
+
+# @torch.no_grad()
+# def mdlm_adaptive_score_select_update(probs, z_t, t, tm1, diffusion_mask, eps=1e-4, score_mask_position=None, select_position=None, unmask_token=None):
+#     score = score_mask_position(z_t, probs) * diffusion_mask
+#     update_positions = select_position(score)
+#     z_tm1 = unmask_token(probs)
+#     return update_positions, z_tm1
 
 
 #################### GIDD sampling strategies ####################
@@ -335,15 +373,19 @@ def gidd_selected_positions_decomposed_update_distribution(probs, z_t, t, s, i, 
     return update_positions, next_z_t
 
 
-def gidd_change_based_on_model_confidence_to_change(probs, z_t, t, s, i, diffusion_mask, score_position_for_change, select_position, change_token):
-    score = score_position_for_change(z_t, probs) * diffusion_mask
-    update_positions = select_position(score)
-    next_z_t = change_token(probs, z_t)
+def gidd_change_based_on_model_confidence_to_change(probs, z_t, t, s, i, diffusion_mask, tokenizer, score_position_for_change, select_position, change_token):
+    if i == 0:
+        update_positions = (z_t == tokenizer.mask_token_id)
+        next_z_t = probs.argmax(-1)
+    else:
+        score = score_position_for_change(z_t, probs) * diffusion_mask
+        update_positions = select_position(score)
+        next_z_t = change_token(probs, z_t)
     return update_positions, next_z_t
 
-def gidd_keep_where_confident(probs, z_t, t, s, i, diffusion_mask, score_position_for_keep_where_confident, select_position, change_token):
+def gidd_keep_where_confident(probs, z_t, t, s, i, diffusion_mask, tokenizer, score_position_for_keep_where_confident, select_position, change_token):
     if i == 0:
-        update_positions = (z_t == 9)
+        update_positions = (z_t == tokenizer.mask_token_id)
         next_z_t = probs.argmax(-1)
     else:
         score = score_position_for_keep_where_confident(z_t, probs) * diffusion_mask
@@ -353,7 +395,8 @@ def gidd_keep_where_confident(probs, z_t, t, s, i, diffusion_mask, score_positio
 
 def gidd_change_low_confidence_positions(probs, z_t, t, s, i, diffusion_mask, tokenizer, score_mask_position, select_position_unmask, unmask_token, change_token):
     if i == 0:
-        update_positions = (z_t == 9)
+        # print(f'num masks remaining: {(z_t[..., -81:] == tokenizer.mask_token_id).sum(-1)}')
+        update_positions = (z_t == tokenizer.mask_token_id)
         next_z_t = probs.argmax(-1)
     else:
         confidence_current_token = probs.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
@@ -369,6 +412,31 @@ def gidd_change_low_confidence_positions(probs, z_t, t, s, i, diffusion_mask, to
 
         update_positions = low_confidence_positions | update_positions_unmask
         next_z_t = low_confidence_positions * next_z_t_change + update_positions_unmask * next_z_t_unmask
+    return update_positions, next_z_t
+
+def gidd_change_lowest_confidence_position(probs, z_t, t, s, i, diffusion_mask, tokenizer, score_mask_position, select_position_unmask, unmask_token, k):
+    if i == 0:
+        # print(f'num masks remaining: {(z_t[..., -81:] == tokenizer.mask_token_id).sum(-1)}')
+        update_positions = (z_t == tokenizer.mask_token_id)
+        next_z_t = probs.argmax(-1)
+    else:
+        confidence_current_token = probs.gather(-1, z_t.unsqueeze(-1)).squeeze(-1)
+        unmasked_positions = (z_t != tokenizer.mask_token_id) * diffusion_mask.to(dtype=bool)
+        min_confidence_of_unmasked_indices = torch.topk(confidence_current_token.masked_fill(~unmasked_positions, 1), k=k, largest=False).indices
+        update_positions_change = torch.zeros_like(z_t, dtype=torch.bool)
+        update_positions_change.scatter_(-1, min_confidence_of_unmasked_indices, True)
+        update_positions_change = update_positions_change * unmasked_positions
+        next_z_t_change = probs.argmax(-1)
+        update_positions_change = update_positions_change * (next_z_t_change != z_t)
+        unmask_sample = (update_positions_change.sum(dim=-1) == 0)
+
+        score_unmask = score_mask_position(z_t, probs) * (z_t == tokenizer.mask_token_id) * diffusion_mask
+        update_positions_unmask = select_position_unmask(score_unmask)
+        update_positions_unmask = update_positions_unmask * unmask_sample.unsqueeze(-1)
+        next_z_t_unmask = unmask_token(probs) * update_positions_unmask
+
+        update_positions = update_positions_change | update_positions_unmask
+        next_z_t = next_z_t_change * update_positions_change + next_z_t_unmask
     return update_positions, next_z_t
 
 def gidd_flattened(probs:torch.Tensor, z_t, t, s, i, num_denoising_steps, diffusion_mask, max_score, tokenizer):
@@ -458,20 +526,20 @@ def gidd_prob_to_recover_data(probs, z_t, t, s, i, diffusion_mask, tokenizer, no
 
 
 def get_sampling_strategy_class(config, model, noise_schedule, tokenizer, t_eps, min_p):
-    match config.strategy:
-        case "gidd_prob_to_recover_data":
-            return Gidd_prob_to_recover_data(config.p_denoise, model, noise_schedule, tokenizer, t_eps, config.k, get_self_correction(config))
-        case "gidd_flattened":
-            return Gidd_flattened(model, noise_schedule, tokenizer, t_eps, get_sampling_strategy(config, tokenizer, noise_schedule, min_p), get_self_correction(config))
-        case _:
-            return Gidd_independent_steps(model, noise_schedule, tokenizer, t_eps, get_sampling_strategy(config, tokenizer, noise_schedule, min_p), get_self_correction(config))
+    if config.strategy == "gidd_prob_to_recover_data":
+        return Gidd_prob_to_recover_data(config.p_denoise, model, noise_schedule, tokenizer, config.time_steps, t_eps, config.k, get_self_correction(config))
+    elif config.strategy in ["mdlm_vanilla", "mdlm_adaptive_score_select_update"]:
+        return Independent_steps(model, None, tokenizer, config.time_steps, t_eps, get_sampling_strategy(config, tokenizer, None, min_p), get_self_correction(config))
+    else:
+        return Independent_steps(model, noise_schedule, tokenizer, config.time_steps, t_eps, get_sampling_strategy(config, tokenizer, noise_schedule, min_p), get_self_correction(config))
 
 class SamplingStrategy(nn.Module):
-    def __init__(self, model, noise_schedule, tokenizer, t_eps):
+    def __init__(self, model, noise_schedule, tokenizer, time_steps, t_eps):
         super().__init__()
         self.model = model
         self.noise_schedule = noise_schedule
         self.tokenizer = tokenizer
+        self.time_steps = time_steps
         self.t_eps = t_eps
 
     @torch.no_grad()
@@ -484,6 +552,8 @@ class SamplingStrategy(nn.Module):
         self.num_self_correction_steps = num_self_correction_steps
         self.max_length = max_length
         self.device = device
+        self.ts = torch.linspace(0, 1, self.num_denoising_steps + 1, device=device).unsqueeze(-1)
+        self.ts = (1 - 2 * self.t_eps) * self.ts + self.t_eps
         # State which is updated throughout sampling
         self.z_t = self.initial_z_t.clone()
         self.p_zs_x = torch.zeros_like(self.initial_z_t, dtype=torch.float, device=device)
@@ -562,6 +632,18 @@ class SamplingStrategy(nn.Module):
         if score_method == 'avg':
             p_zt_x_mean = mean_over_diffusion_positions(p_zt_x, self.diffusion_mask)
             return p_zt_x_mean.squeeze(0).item()
+        elif score_method == 'avg_unmasked':
+            is_unmasked = torch.logical_and(self.diffusion_mask.to(dtype=bool), self.z_t != self.tokenizer.mask_token_id)
+            p_zt_x_unmasked = torch.where(is_unmasked, p_zt_x, 0)
+            num_unmasked = torch.sum(is_unmasked).clamp(min=1)
+            p_zt_x_mean_unmasked = torch.sum(p_zt_x_unmasked) / num_unmasked
+            return p_zt_x_mean_unmasked.squeeze(0).item()
+        elif score_method == 'avg_all_using_confidence_for_masked':
+            is_masked = torch.logical_and(self.diffusion_mask.to(dtype=bool), self.z_t == self.tokenizer.mask_token_id)
+            is_unmasked = torch.logical_and(self.diffusion_mask.to(dtype=bool), self.z_t != self.tokenizer.mask_token_id)
+            confidence_for_masked = torch.where(is_masked, probs.max(-1).values, 0)
+            p_zt_x_unmasked = torch.where(is_unmasked, p_zt_x, 0)
+            return ((torch.sum(confidence_for_masked) + torch.sum(p_zt_x_unmasked)) / torch.sum(self.diffusion_mask)).squeeze(0).item()
         elif score_method == 'min':
             p_zt_x = torch.where(torch.logical_and(self.diffusion_mask.to(dtype=bool), self.z_t != self.tokenizer.mask_token_id), p_zt_x, 1)
             min_p_zt_x = torch.min(p_zt_x, dim=-1).values
@@ -586,17 +668,15 @@ class SamplingStrategy(nn.Module):
         return score >= 0.9995
 
 
-class Gidd_independent_steps(SamplingStrategy):
-    def __init__(self, model, noise_schedule, tokenizer, t_eps, sampling_strategy, self_correction=None):
-        super().__init__(model, noise_schedule, tokenizer, t_eps)
+class Independent_steps(SamplingStrategy):
+    def __init__(self, model, noise_schedule, tokenizer, time_steps, t_eps, sampling_strategy, self_correction=None):
+        super().__init__(model, noise_schedule, tokenizer, time_steps, t_eps)
         self.sampling_strategy = sampling_strategy
         self.self_correction = self_correction
 
     @torch.no_grad()
     def initialize(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device):
         super().initialize(initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device)
-        self.ts = torch.linspace(0, 1, self.num_denoising_steps + 1, device=device).unsqueeze(-1)
-        self.ts = (1 - 2 * self.t_eps) * self.ts + self.t_eps
     
     def stopping_criterion(self, i, generation_info_handler):
         if i < self.num_denoising_steps:
@@ -616,12 +696,10 @@ class Gidd_independent_steps(SamplingStrategy):
             if generation_info_handler is not None:
                 generation_info_handler.batch_step_forward_calls(self.is_fully_denoised)
                 generation_info_handler.beam_search_forward_calls_step()
-            # time_steps = 'fixed'
-            time_steps = 'inferred'
-            if time_steps == 'fixed':
+            if self.time_steps == 'fixed':
                 t = self.ts[self.num_denoising_steps - 1 - i]
                 s = self.ts[max(0, self.num_denoising_steps - 2 - i)]
-            elif time_steps == 'inferred':
+            elif self.time_steps == 'inferred':
                 t, s = self.infer_time_step()
             logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
             logits[..., self.tokenizer.mask_token_id:] = -1e6
@@ -678,12 +756,11 @@ class Gidd_independent_steps(SamplingStrategy):
                     # print(f'index of min p_zt_x: token {min_p_zt_x_index % 81} in sample {correct_samples_indices[min_p_zt_x_index // 81]}')
                     
                     # print largest min p_zt_x for incorrect samples
-                    incorrect_samples = ~correct_samples
-                    if incorrect_samples.any():
-                        max_min_p_zt_x = torch.max(torch.min(p_zt_x[incorrect_samples, -81:], dim=-1).values)
-                        # print(f'largest min p_zt_x for incorrect samples: {max_min_p_zt_x}')
-                        if max_min_p_zt_x > 0.9:
-                            print(f'large min p_zt_x for incorrect samples: {max_min_p_zt_x}, min p_zt_x for correct samples: {min_p_zt_x_correct}, separable: {min_p_zt_x_correct > max_min_p_zt_x}')
+                    # incorrect_samples = ~correct_samples
+                    # if incorrect_samples.any():
+                    #     max_min_p_zt_x = torch.max(torch.min(p_zt_x[incorrect_samples, -81:], dim=-1).values))
+                    #     if max_min_p_zt_x > 0.9:
+                    #         print(f'large min p_zt_x for incorrect samples: {max_min_p_zt_x}, min p_zt_x for correct samples: {min_p_zt_x_correct}, separable: {min_p_zt_x_correct > max_min_p_zt_x}')
 
         elif self.self_correction is not None and not self.has_self_corrected:
             # TODO: change self-correction code to update one step at a time, such that history can be collected easily
@@ -736,8 +813,8 @@ class Gidd_flattened(SamplingStrategy):
             self.has_self_corrected = True
 
 class Gidd_prob_to_recover_data(SamplingStrategy):
-    def __init__(self, config, model, noise_schedule, tokenizer, t_eps, k, self_correction=None):
-        super().__init__(model, noise_schedule, tokenizer, t_eps)
+    def __init__(self, config, model, noise_schedule, tokenizer, time_steps, t_eps, k, self_correction=None):
+        super().__init__(model, noise_schedule, tokenizer, time_steps, t_eps)
         self.config = config
         self.k = k
         self.self_correction = self_correction
@@ -746,8 +823,6 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
     def initialize(self, initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device):
         # State which remains constant throughout sampling
         super().initialize(initial_z_t, diffusion_mask, solution, puzzle_conditioning, num_denoising_steps, num_self_correction_steps, max_length, device)
-        self.ts = torch.linspace(0, 1, self.num_denoising_steps + 1, device=device).unsqueeze(-1)
-        self.ts = (1 - 2 * self.t_eps) * self.ts + self.t_eps
         self.not_mask_token_id_tensor = torch.ones((1, 1), dtype=initial_z_t.dtype, device=device) * self.noise_schedule.not_mask_id
         self.mask_token_id_tensor = torch.ones((1, 1), dtype=initial_z_t.dtype, device=device) * self.tokenizer.mask_token_id
 
@@ -767,12 +842,10 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
             if generation_info_handler is not None:
                 generation_info_handler.batch_step_forward_calls(self.is_fully_denoised)
                 generation_info_handler.beam_search_forward_calls_step()
-            # time_steps = 'fixed'
-            time_steps = 'inferred'
-            if time_steps == 'fixed':
+            if self.time_steps == 'fixed':
                 t = self.ts[self.num_denoising_steps - 1 - i]
                 s = self.ts[max(0, self.num_denoising_steps - 2 - i)]
-            elif time_steps == 'inferred':
+            elif self.time_steps == 'inferred':
                 t, s = self.infer_time_step()
             logits = self.model(self.z_t, t, puzzle_conditioning=self.puzzle_conditioning)
             logits[..., self.tokenizer.mask_token_id:] = -1e6
@@ -857,7 +930,7 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                     elif self.config.position_metric == "confident_and_p_denoise":
                         confident_and_p_denoise = probs.max(-1).values * p_zs_x_and_zt_nx
                         update_positions = dice_roll < confident_and_p_denoise
-                    elif self.config.position_metric == "confident_and_noisy": # might not make sense but for the sake of running the cross product of configuration options keep this
+                    elif self.config.position_metric == "confident_and_noisy":
                         confident_and_noisy = probs.max(-1).values * (1 - p_zt_x)
                         update_positions = dice_roll < confident_and_noisy
                     elif self.config.position_metric == "margin_and_noisy":
@@ -871,6 +944,10 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                     elif self.config.position_metric == "confident":
                         confident = probs.max(-1).values
                         update_positions = dice_roll < confident
+                    elif self.config.position_metric == "margin":
+                        top2 = torch.topk(probs, 2, dim=-1)
+                        margin = top2.values[..., 0] - top2.values[..., 1]
+                        update_positions = dice_roll < margin
                 elif self.config.position_sampling == "top_k":
                     # updatable_positions = self.diffusion_mask
                     updatable_positions = self.diffusion_mask & ~denoised
@@ -982,12 +1059,12 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                     # print(f'index of min p_zt_x: token {min_p_zt_x_index % 81} in sample {correct_samples_indices[min_p_zt_x_index // 81]}')
                     
                     # print largest min p_zt_x for incorrect samples
-                    incorrect_samples = ~correct_samples
-                    if incorrect_samples.any():
-                        max_min_p_zt_x = torch.max(torch.min(p_zt_x[incorrect_samples, -81:], dim=-1).values)
-                        # print(f'largest min p_zt_x for incorrect samples: {max_min_p_zt_x}')
-                        if max_min_p_zt_x > 0.9:
-                            print(f'large min p_zt_x for incorrect samples: {max_min_p_zt_x}, min p_zt_x for correct samples: {min_p_zt_x_correct}, separable: {min_p_zt_x_correct > max_min_p_zt_x}')
+                    # incorrect_samples = ~correct_samples
+                    # if incorrect_samples.any():
+                    #     max_min_p_zt_x = torch.max(torch.min(p_zt_x[incorrect_samples, -81:], dim=-1).values)
+                    #     # print(f'largest min p_zt_x for incorrect samples: {max_min_p_zt_x}')
+                    #     if max_min_p_zt_x > 0.9:
+                    #         print(f'large min p_zt_x for incorrect samples: {max_min_p_zt_x}, min p_zt_x for correct samples: {min_p_zt_x_correct}, separable: {min_p_zt_x_correct > max_min_p_zt_x}')
         
         elif self.self_correction is not None and not self.has_self_corrected:
             # TODO: change self-correction code to update one step at a time, such that history can be collected easily
@@ -995,4 +1072,3 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
             self.has_self_corrected = True
             if generation_info_handler is not None:
                 generation_info_handler.batch_step_history(self.z_t)
-    
