@@ -366,15 +366,22 @@ class GiddSampler_new(Sampler):
         initial_beam['steps_before_pruning'] = steps_before_pruning
         initial_beam['denoising_progress'] = 0 # number of tokens unmasked?
         initial_beam['step'] = 0
-        initial_beam['parent_score'] = 0
+        initial_beam['beam_id'] = 0
+        score_relative_to_parent = False
+        if score_relative_to_parent:
+            initial_beam['parent_score'] = 0
         beams.append(initial_beam)
         
         beam_search_complete = False
         pruned_last_iteration = False
+        beam_id_counter = 1
+        beam_started_with_correct_branches = {}
+        beam_started_with_correct_branches_intermediate = {}
         while not beam_search_complete:
             next_beams = []
             beam_search_complete = True
             ready_for_pruning = True
+            beam_has_correct_branches = {}
             for beam in beams:
                 if beam['denoising_progress'] == final_denoising_progress and not pruned_last_iteration:
                     if self.sampling_strategy.beam_score_final_accepted(beam, generation_info_handler):
@@ -396,31 +403,71 @@ class GiddSampler_new(Sampler):
                         current_branching_factor = branching_factor
                     else:
                         current_branching_factor = 1
+                    if current_branching_factor > 1:
+                        beam_id_counter += 1
+                        current_beam_id = beam_id_counter
+                    else:
+                        current_beam_id = beam['beam_id']
                     new_beams = self.sampling_strategy.branch_step(beam, current_branching_factor, generation_info_handler)
                     num_correct = 0
                     for new_beam in new_beams:
                         new_beam['steps_before_pruning'] = beam['steps_before_pruning'] - 1
                         new_beam['denoising_progress'] = torch.sum((new_beam['z_t'] != self.tokenizer.mask_token_id) * diffusion_mask).item()
                         new_beam['step'] = beam['step'] + 1
-                        # for scoring relative to parent:
-                        new_beam['parent_score'] = beam['parent_score']
+                        new_beam['beam_id'] = current_beam_id
+                        beam_has_correct_branches[current_beam_id] = beam_has_correct_branches.get(current_beam_id, False) or check_beam_correct(new_beam)
+                        if score_relative_to_parent:
+                            new_beam['parent_score'] = beam['parent_score']
                         if check_beam_correct(new_beam):
                             num_correct += 1
                     # print(f"Step {beam['step']}: branched into {len(new_beams)} beams, {num_correct} correct")
-                    old_beam_is_correct = check_beam_correct(beam)
-                    # if old_beam_is_correct and num_correct == 0:
-                    #     print(f'Step {beam["step"]}: branched out of a correct beam but none of the new beams are correct!')
-                    # elif not old_beam_is_correct and num_correct > 0:
-                    #     print(f'Step {beam["step"]}: branched into {num_correct} correct beams from an incorrect beam!')
+                    if current_branching_factor > 1:
+                        new_beam_started_with_correct = beam_has_correct_branches[current_beam_id]
+                        beam_started_with_correct_branches[current_beam_id] = new_beam_started_with_correct
+                        beam_started_with_correct_branches_intermediate[current_beam_id] = new_beam_started_with_correct
+                        parent_beam_correct = check_beam_correct(beam)
+                        if not new_beam_started_with_correct and parent_beam_correct:
+                            # a correct beam branched into incorrect beams only
+                            generation_info_handler.beam_search_beam_correctness_step('bad_branch')
+                        if new_beam_started_with_correct and not parent_beam_correct:
+                            # an incorrect beam branched into some correct beams
+                            generation_info_handler.beam_search_beam_correctness_step('good_branch')
+                    # if not generation_info_handler is None:
+                    #     old_beam_is_correct = check_beam_correct(beam)
+                    #     if old_beam_is_correct and num_correct == 0:
+                    #         # generation_info_handler.bad_branch_step()
+                    #         if current_branching_factor > 1:
+                    #             print(f'Step {beam["step"]}: branched out of a correct beam but none of the new beams are correct!')
+                    #         # else:
+                    #         #     print(f'Step {beam["step"]}: progressed a correct beam but the new beam is not correct!')
+                    #     elif not old_beam_is_correct and num_correct > 0:
+                    #         if current_branching_factor > 1:
+                    #             print(f'Step {beam["step"]}: branched into {num_correct} correct beams from an incorrect beam!')
+                    #         # else:
+                    #         #     print(f'Step {beam["step"]}: progressed into a correct beam from an incorrect beam!')
                     next_beams = next_beams + new_beams
                 else:
+                    current_beam_id = beam['beam_id']
+                    beam_has_correct_branches[current_beam_id] = beam_has_correct_branches.get(current_beam_id, False) or check_beam_correct(beam)
                     next_beams.append(beam)
+            
+            if generation_info_handler is not None:
+                for current_beam_id, has_correct_branches in beam_has_correct_branches.items():
+                    started_with_correct_intermediate = beam_started_with_correct_branches_intermediate[current_beam_id]
+                    if started_with_correct_intermediate and not has_correct_branches:
+                        # an initially correct beam lost all correct branches during intermediate propagation
+                        generation_info_handler.beam_search_beam_correctness_step('bad_intermediate_propagation')
+                        beam_started_with_correct_branches_intermediate[current_beam_id] = False
+                    if not started_with_correct_intermediate and has_correct_branches:
+                        # an initially incorrect beam gained some correct branches during intermediate propagation
+                        generation_info_handler.beam_search_beam_correctness_step('good_intermediate_propagation')
+                        beam_started_with_correct_branches_intermediate[current_beam_id] = True
             # if not ready_for_pruning:
             #     print(f"Before deduplication: {len(next_beams)} beams")
             next_beams = deduplicate(next_beams)
             if not ready_for_pruning:
                 pruned_last_iteration = False
-                num_correct = [check_beam_correct(beam) for beam in next_beams].count(True)
+                # num_correct = [check_beam_correct(beam) for beam in next_beams].count(True)
                 # print(f"After deduplication: {len(next_beams)} beams, {num_correct} correct")
             if ready_for_pruning and not beam_search_complete:
                 pruned_last_iteration = True
@@ -437,11 +484,11 @@ class GiddSampler_new(Sampler):
                     for beam in beams_to_prune:
                         score = self.sampling_strategy.beam_score(beam, score_time, score_method, generation_info_handler)
                         beam_scores.append(score)
-                    # for scoring relative to parent:
-                    relative_beam_scores = [beam_scores[i] - beams_to_prune[i]['parent_score'] for i in range(len(beam_scores))]
-                    for i, beam in enumerate(beams_to_prune):
-                        beam['parent_score'] = beam_scores[i]
-                    beam_scores = relative_beam_scores
+                    if score_relative_to_parent:
+                        relative_beam_scores = [beam_scores[i] - beams_to_prune[i]['parent_score'] for i in range(len(beam_scores))]
+                        for i, beam in enumerate(beams_to_prune):
+                            beam['parent_score'] = beam_scores[i]
+                        beam_scores = relative_beam_scores
                     # select top pruning_num_beams beams
                     topk_indices = torch.topk(torch.tensor(beam_scores), k=min(pruning_num_beams, len(beams_to_prune))).indices.tolist()
                     pruned_beams = [beams_to_prune[i] for i in topk_indices]
@@ -463,9 +510,28 @@ class GiddSampler_new(Sampler):
                             'steps': [beam['step'] for beam in beams_to_prune],
                         })
                         # print(f'Step {beam["step"]}: pruned out all correct beams! beam scores: {beam_scores}, correct beam? {is_beam_correct}')
+                        print(f'Step {beam["step"]}: pruned out all correct beams! (there were {num_correct_before_pruning}/{num_incorrect_before_pruning} correct/incorrect beams before pruning down to {pruning_num_beams} beams)')
                     generation_info_handler.beam_search_branch_correctness_step(min_progress, num_correct_before_pruning, num_incorrect_before_pruning, num_correct_after_pruning, num_incorrect_after_pruning)
                 # add pruned beams back to next_beams
                 # next_beams = [beam for beam in next_beams if beam['denoising_progress'] != min_progress] + pruned_beams
+                if generation_info_handler is not None:
+                    beam_ids_pruning = set([beam['beam_id'] for beam in beams_to_prune])
+                    for current_beam_id in beam_ids_pruning:
+                        if beam_started_with_correct_branches[current_beam_id] and not beam_has_correct_branches[current_beam_id]:
+                            # a beam with initially correct branches lost them during propagation by the time of pruning
+                            generation_info_handler.beam_search_beam_correctness_step('bad_propagation')
+                        if not beam_started_with_correct_branches[current_beam_id] and beam_has_correct_branches[current_beam_id]:
+                            # a beam with initially incorrect branches gained some correct branches during propagation by the time of pruning
+                            generation_info_handler.beam_search_beam_correctness_step('good_propagation')
+                    num_correct_beams_missed = min(pruning_num_beams, num_correct_before_pruning) - num_correct_after_pruning
+                    if num_correct_beams_missed > 0:
+                        # missed num_correct_beams_missed correct beams during pruning
+                        generation_info_handler.beam_search_beam_correctness_step('bad_pruning_branches_missed', num_correct_beams_missed)
+                        generation_info_handler.beam_search_beam_correctness_step('bad_pruning_instances')
+                    for current_beam_id in beam_ids_pruning:
+                        beam_started_with_correct_branches.pop(current_beam_id, None)
+                        beam_started_with_correct_branches_intermediate.pop(current_beam_id, None)
+
                 next_beams = [beam for beam in next_beams if beam['step'] != min_progress] + pruned_beams
                 # print(f"After pruning: {len(next_beams)} beams, {[(torch.logical_or(beam['z_t'] == solution, beam['z_t'] == self.tokenizer.mask_token_id) * diffusion_mask.bool()).sum().item() == torch.sum(diffusion_mask).item() for beam in next_beams].count(True)} correct")
             beams = next_beams

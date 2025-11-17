@@ -3,6 +3,12 @@ import time
 from typing import Optional, Dict, Any
 from gidd.eval.visualize import history_to_str, marginals_to_str
 from gidd.utils import mean_over_diffusion_positions
+from gidd.eval.io_generation_info import (
+    _ensure_dir, save_meta, save_history, save_logits, save_confidence_t_0, save_marginals, save_change_events_table, save_forward_calls, save_prune_correct, save_beam_search_forward_calls, save_beam_search_branch_correctness, save_beam_search_beam_correctness
+)
+from gidd.eval.io_generation_info import (
+    load_meta, load_history, load_logits, load_confidence_t_0, load_marginals, load_change_events_table, load_forward_calls, load_prune_correct, load_beam_search_forward_calls, load_beam_search_branch_correctness, load_beam_search_beam_correctness
+)
 # from gidd.eval.evaluate_one import namespace_to_dict
 
 class GenerationInfoHandler:
@@ -50,6 +56,9 @@ class GenerationInfoHandler:
             self.collect_beam_search_branch_correctness = True
             self.beam_search_branch_correctness = []
             self.num_correct_before_initial_branch = 0
+        if "beam_search_beam_correctness" in info:
+            self.collect_beam_search_beam_correctness = True
+            self.beam_correctness_events = [] # list of dicts, one dict per sample
 
     def batch_initialize(self, initial_z_t, diffusion_mask, solution, device):
         self.batch_size = initial_z_t.shape[0]
@@ -85,6 +94,17 @@ class GenerationInfoHandler:
             self.batch_beam_search_forward_calls = 0
         if getattr(self, "collect_beam_search_branch_correctness", False):
             self.batch_beam_search_branch_correctness = []
+        if getattr(self, "collect_beam_search_beam_correctness", False):
+            self.batch_beam_correctness_events = {
+                'bad_branch': 0,
+                'good_branch': 0,
+                'bad_intermediate_propagation': 0,
+                'good_intermediate_propagation': 0,
+                'bad_propagation': 0,
+                'good_propagation': 0,
+                'bad_pruning_branches_missed': 0,
+                'bad_pruning_instances': 0,
+            }
             
     
     def batch_step_history(self, z_t):
@@ -212,6 +232,12 @@ class GenerationInfoHandler:
                 'num_correct_after_pruning': num_correct_after_pruning,
                 'num_incorrect_after_pruning': num_incorrect_after_pruning,
             })
+    
+    def beam_search_beam_correctness_step(self, event_type: str, count: int = 1):
+        if getattr(self, "collect_beam_search_beam_correctness", False):
+            if event_type not in self.batch_beam_correctness_events:
+                raise ValueError(f"Unknown beam correctness event type: {event_type}")
+            self.batch_beam_correctness_events[event_type] += count
 
     def batch_finalize(self):
         self.num_samples += self.batch_size
@@ -290,6 +316,8 @@ class GenerationInfoHandler:
             self.beam_search_forward_calls.append(self.batch_beam_search_forward_calls)
         if getattr(self, "collect_beam_search_branch_correctness", False):
             self.beam_search_branch_correctness.append(self.batch_beam_search_branch_correctness)
+        if getattr(self, "collect_beam_search_beam_correctness", False):
+            self.beam_correctness_events.append(self.batch_beam_correctness_events)
 
     def get_history(self):
         if getattr(self, "collect_history", False):
@@ -363,6 +391,12 @@ class GenerationInfoHandler:
             }
         else:
             raise ValueError("Beam search branch correctness info was not collected")
+    
+    def get_beam_search_beam_correctness(self):
+        if getattr(self, "collect_beam_search_beam_correctness", False):
+            return self.beam_correctness_events # list of dicts
+        else:
+            raise ValueError("Beam search beam correctness info was not collected")
 
     def print_info(self):
         if getattr(self, "collect_history", False):
@@ -378,9 +412,6 @@ class GenerationInfoHandler:
         """
         Saves collected data to `out_dir` with a stable schema.
         """
-        from io_generation_info import (
-            _ensure_dir, save_meta, save_history, save_logits, save_confidence_t_0, save_marginals, save_change_events_table, save_forward_calls, save_prune_correct, save_beam_search_forward_calls, save_beam_search_branch_correctness
-        )
         _ensure_dir(out_dir)
 
         meta = dict(meta or {})
@@ -397,6 +428,7 @@ class GenerationInfoHandler:
             "collect_prune_correct": getattr(self, "collect_prune_correct", False),
             "collect_beam_search_forward_calls": getattr(self, "collect_beam_search_forward_calls", False),
             "collect_beam_search_branch_correctness": getattr(self, "collect_beam_search_branch_correctness", False),
+            "collect_beam_search_beam_correctness": getattr(self, "collect_beam_search_beam_correctness", False),
         })
         meta.update(self.sampling_config_dict)
 
@@ -441,6 +473,9 @@ class GenerationInfoHandler:
         
         if getattr(self, "collect_beam_search_branch_correctness", False):
             save_beam_search_branch_correctness(self.get_beam_search_branch_correctness(), out_dir)
+        
+        if getattr(self, "collect_beam_search_beam_correctness", False):
+            save_beam_search_beam_correctness(self.get_beam_search_beam_correctness(), out_dir)
 
         save_meta(meta, out_dir)
 
@@ -449,7 +484,6 @@ class GenerationInfoHandler:
         """
         Convenience loader that returns (meta, history, marginals, change_events_df_or_list)
         """
-        from io_generation_info import load_meta, load_history, load_logits, load_confidence_t_0, load_marginals, load_change_events_table, load_forward_calls, load_prune_correct, load_beam_search_forward_calls, load_beam_search_branch_correctness
         meta = load_meta(out_dir)
         history = load_history(out_dir, map_location) if meta.get("collect_history") else None
         logits = load_logits(out_dir, map_location) if meta.get("collect_logits") else None
@@ -461,4 +495,5 @@ class GenerationInfoHandler:
         prune_correct = load_prune_correct(out_dir, map_location) if meta.get("collect_prune_correct") else None
         beam_search_forward_calls = load_beam_search_forward_calls(out_dir, map_location) if meta.get("collect_beam_search_forward_calls") else None
         beam_search_branch_correctness = load_beam_search_branch_correctness(out_dir, map_location) if meta.get("collect_beam_search_branch_correctness") else None
-        return meta, history, logits, confidence_t_0, marginals, change_events_table, forward_calls, prune_correct, beam_search_forward_calls, beam_search_branch_correctness
+        beam_search_beam_correctness = load_beam_search_beam_correctness(out_dir, map_location) if meta.get("collect_beam_search_beam_correctness") else None
+        return meta, history, logits, confidence_t_0, marginals, change_events_table, forward_calls, prune_correct, beam_search_forward_calls, beam_search_branch_correctness, beam_search_beam_correctness

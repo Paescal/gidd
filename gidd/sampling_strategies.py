@@ -403,6 +403,8 @@ def gidd_change_low_confidence_positions(probs, z_t, t, s, i, diffusion_mask, to
         max_confidence = probs.max(-1).values
         low_confidence_positions = (confidence_current_token < max_confidence) * (z_t != tokenizer.mask_token_id) * diffusion_mask.to(dtype=bool)
         samples_where_change = low_confidence_positions.any(dim=-1)
+        # if low_confidence_positions.sum(dim=-1).max() > 1:
+        #     print(f'Changing {low_confidence_positions.sum(dim=-1).max().item()} positions in one sample!')
         next_z_t_change = change_token(probs, z_t)
 
         score_unmask = score_mask_position(z_t, probs) * (z_t == tokenizer.mask_token_id) * diffusion_mask
@@ -981,6 +983,11 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                         # if i % 10 == 0:
                         #     print(f"i: {i}, ks: {ks}")
                         update_positions = sample_position_top_variable_k(metric, ks)
+                    elif self.config.position_metric == "margin":
+                        top2 = torch.topk(probs, 2, dim=-1)
+                        margin = top2.values[..., 0] - top2.values[..., 1]
+                        metric = margin * updatable_positions
+                        update_positions = sample_position_top_variable_k(metric, ks)
 
                 # update selected positions
                 if self.config.token_sampling == "categorical":
@@ -1006,8 +1013,10 @@ class Gidd_prob_to_recover_data(SamplingStrategy):
                 uniform_noise_positions = uniform_noise_positions & ~denoised # don't update positions that are currently believed to be denoised
                 # print(f"{i}: num denoised positions: {(denoised & self.diffusion_mask).sum()}")
                 
-                if self.config.oracle == "model_EMA":
+                if self.config.oracle in ["model_EMA", "model", "perfect"]:
                     self.p_zs_x = torch.where(update_positions.bool(), probs.gather(-1, next_z_t.unsqueeze(-1)).squeeze(-1), p_zt_x)
+                    # self.p_zs_x = p_zt_x
+                    # self.p_zs_x = probs.gather(-1, next_z_t.unsqueeze(-1)).squeeze(-1)
                 else:
                     self.p_zs_x = p_zs_x_and_zt_x + p_zs_x_and_zt_nx
                     if self.config.oracle in ["recurrence", "model_and_recurrence"]:

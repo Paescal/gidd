@@ -149,6 +149,16 @@ def load_beam_search_branch_correctness(out_dir: str, map_location: str = "cpu")
     obj = torch.load(path, map_location=map_location, weights_only=True)
     return obj
 
+def save_beam_search_beam_correctness(beam_search_beam_correctness: list[Dict[str, Any]], out_dir: str) -> str:
+    path = os.path.join(out_dir, "beam_search_beam_correctness.pt")
+    torch.save(beam_search_beam_correctness, path)
+    return path
+
+def load_beam_search_beam_correctness(out_dir: str, map_location: str = "cpu") -> list[Dict[str, Any]]:
+    path = os.path.join(out_dir, "beam_search_beam_correctness.pt")
+    obj = torch.load(path, map_location=map_location, weights_only=True)
+    return obj
+
 def save_meta(meta: Dict[str, Any], out_dir: str) -> str:
     path = os.path.join(out_dir, "meta.json")
     with open(path, "w") as f:

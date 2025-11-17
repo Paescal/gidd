@@ -34,20 +34,20 @@ beam_search=(
 steps_before_pruning=(
     # "1"
     # "2"
-    # "4"
+    "4"
     "8"
-    # "16"
-    # "32"
+    "16"
+    "32"
 )
 pruning_num_beams=(
-    # "1"
+    "1"
     # "2"
-    "4"
+    # "4"
 )
 branching_factors=(
-    # "2"
+    "2"
     # "3"
-    "4"
+    # "4"
     # "8"
 )
 score_times=(
@@ -58,15 +58,15 @@ score_methods=(
     "avg"
     # "avg_unmasked"
     # "avg_all_using_confidence_for_masked"
-    "min"
+    # "min"
 )
 initiate_beam_search_after_progress=(
     "0.0"
     # "0.1"
-    # "0.2"
+    "0.2"
     # "0.3"
     # "0.4"
-    # "0.5"
+    "0.5"
     # "0.6"
     # "0.7"
 )
@@ -103,19 +103,19 @@ nums_denoising_steps=(
     # "50"
     # "60"
     # "70"
-    # "80"
+    "80"
     # "90"
     # "100"
     # "150"
     # "200"
     # "300"
-    "81"
+    # "81"
     # "128"
 )
 nums_self_correction_steps=(
-    # "0"
+    "0"
     # "4"
-    "32"
+    # "32"
 )
 strategies=(
     # "mdlm_vanilla"
@@ -123,18 +123,18 @@ strategies=(
     # "gidd_emulate_mdlm_vanilla"
     # "gidd_emulate_mdlm_adaptive_score_select_update"
     # "gidd_original"
-    "gidd_independent_positions_decomposed_update_distribution"
+    # "gidd_independent_positions_decomposed_update_distribution"
     # "gidd_selected_positions_decomposed_update_distribution" # only works with fixed time steps
     # "gidd_change_based_on_model_confidence_to_change"
     # "gidd_keep_where_confident"
     # "gidd_change_low_confidence_positions"
     # "gidd_change_lowest_confidence_position"
     # "gidd_flattened"
-    # "gidd_prob_to_recover_data"
+    "gidd_prob_to_recover_data"
 )
 time_steps=(
-    "fixed"
-    # "inferred"
+    # "fixed"
+    "inferred"
 )
 score_mask_positions=(
     "MDM_max"
@@ -170,6 +170,7 @@ ks=(
     # "9"
     # "10"
     # "15"
+    # "16"
 )
 gumbel_noise_coefficients=(
     "0"
@@ -184,21 +185,21 @@ self_correction_strategies=(
 )
 oracles=(
     # "perfect"
-    "model"
+    # "model"
     # "recurrence"
     # "model_and_recurrence"
     "model_EMA"
 )
 position_sampling_strategies=(
-    "independent"
-    # "top_k"
+    # "independent"
+    "top_k"
 )
 position_metric_strategies=(
     # "p_denoise"
-    "confident_and_p_denoise"
+    # "confident_and_p_denoise"
     # "confident_and_noisy"
-    "margin_and_noisy"
-    "noisy"
+    # "margin_and_noisy"
+    # "noisy"
     # "confident"
     "margin"
 )

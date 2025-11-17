@@ -37,13 +37,16 @@ def namespace_to_dict(ns):
 def get_info_to_collect(strategy, beam_search_config: bool):
     if beam_search_config.do_beam_search == 'true':
         # return ["prune_correct", "beam_search_forward_calls", "beam_search_branch_correctness"]
-        return ["prune_correct", "beam_search_forward_calls"]
+        return ["prune_correct", "beam_search_forward_calls", "beam_search_beam_correctness"]
+        # return ["prune_correct", "beam_search_forward_calls"]
     if strategy in ["mdlm_vanilla", "mdlm_adaptive_score_select_update"]:
         return ["history", "logits", "forward_calls"]
     elif strategy in ["gidd_prob_to_recover_data"]:
-        return ["history", "logits", "confidence_t_0", "marginals", "change_events", "forward_calls"]
+        # return ["history", "logits", "confidence_t_0", "marginals", "change_events", "forward_calls"]
+        return ["history", "logits", "marginals", "change_events", "forward_calls"]
     else:
-        return ["history", "logits", "confidence_t_0", "marginals", "change_events", "forward_calls"]
+        # return ["history", "logits", "confidence_t_0", "marginals", "change_events", "forward_calls"]
+        return ["history", "logits", "marginals", "change_events", "forward_calls"]
 
 def main(sampling_config):
     device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
