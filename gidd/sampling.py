@@ -510,7 +510,7 @@ class GiddSampler_new(Sampler):
                             'steps': [beam['step'] for beam in beams_to_prune],
                         })
                         # print(f'Step {beam["step"]}: pruned out all correct beams! beam scores: {beam_scores}, correct beam? {is_beam_correct}')
-                        print(f'Step {beam["step"]}: pruned out all correct beams! (there were {num_correct_before_pruning}/{num_incorrect_before_pruning} correct/incorrect beams before pruning down to {pruning_num_beams} beams)')
+                        # print(f'Step {beam["step"]}: pruned out all correct beams! (there were {num_correct_before_pruning}/{num_incorrect_before_pruning} correct/incorrect beams before pruning down to {pruning_num_beams} beams)')
                     generation_info_handler.beam_search_branch_correctness_step(min_progress, num_correct_before_pruning, num_incorrect_before_pruning, num_correct_after_pruning, num_incorrect_after_pruning)
                 # add pruned beams back to next_beams
                 # next_beams = [beam for beam in next_beams if beam['denoising_progress'] != min_progress] + pruned_beams

@@ -3,8 +3,16 @@ import os, json, time
 from typing import Optional, Dict, Any
 import torch
 
-def _ensure_dir(path: str) -> None:
+def _ensure_dir(path: str, clear=True) -> None:
     os.makedirs(path, exist_ok=True)
+    if clear:
+        clear_dir(path)
+
+def clear_dir(path: str) -> None:
+    for filename in os.listdir(path):
+        file_path = os.path.join(path, filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
 
 def save_history(history: torch.Tensor, out_dir: str) -> str:
     path = os.path.join(out_dir, "history.pt")

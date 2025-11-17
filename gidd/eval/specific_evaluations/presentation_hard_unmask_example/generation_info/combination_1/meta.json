@@ -1,0 +1,114 @@
+{
+  "accuracy": 0.8125,
+  "correctly_filled_cells": 0.9175319075584412,
+  "nfe": 1.25,
+  "time_taken_s": 3.8578648567199707,
+  "speed_samples_per_s": 16.589487288161255,
+  "created_at": "2025-11-17 11:40:22 GMT",
+  "num_samples": 64,
+  "max_seq_len": 81,
+  "collect_history": true,
+  "collect_logits": true,
+  "collect_confidence_t_0": false,
+  "collect_marginals": true,
+  "collect_change_events": true,
+  "collect_forward_calls": true,
+  "collect_prune_correct": false,
+  "collect_beam_search_forward_calls": false,
+  "collect_beam_search_branch_correctness": false,
+  "collect_beam_search_beam_correctness": false,
+  "general_sampling": {
+    "device": 0,
+    "seed": 1,
+    "checkpoint": "checkpoints/gidd_0_2/300_epochs",
+    "dataset": "hard",
+    "num_samples": 64,
+    "num_denoising_steps": 80,
+    "num_self_correction_steps": 0,
+    "batch_size": 64,
+    "min_p": 0.0,
+    "compile_torch": 0,
+    "combinations_row": 1
+  },
+  "sampling_strategy": {
+    "strategy": "gidd_change_based_on_model_confidence_to_change",
+    "time_steps": "inferred",
+    "score_mask_position": null,
+    "score_position_for_change": "change_max",
+    "select_position": "top_k_gumbel",
+    "select_position_change": null,
+    "select_position_unmask": null,
+    "change_token": "change_max",
+    "unmask_token": null,
+    "k": 1,
+    "gumbel_noise_coefficient": 0.0,
+    "self_correction": "none",
+    "p_denoise": {
+      "oracle": "model",
+      "position_sampling": "independent",
+      "position_metric": "p_denoise",
+      "token_sampling": "categorical",
+      "uniform_noise": "none"
+    }
+  },
+  "beam_search": {
+    "do_beam_search": "false",
+    "steps_before_pruning": 1,
+    "pruning_num_beams": 1,
+    "branching_factor": 2,
+    "score_time": "after_pruning",
+    "score_method": "avg",
+    "initiate_beam_search_after_progress": 0.1
+  },
+  "history_shape": [
+    64,
+    82,
+    81
+  ],
+  "logits_shape": [
+    64,
+    80,
+    81,
+    9
+  ],
+  "marginals_shapes": {
+    "true_denoised_fraction": [
+      81
+    ],
+    "denoised_fraction": [
+      81
+    ],
+    "mask_fraction": [
+      81
+    ],
+    "uniform_fraction": [
+      81
+    ],
+    "p_zt_x_mean": [
+      64,
+      81
+    ],
+    "p_zt_x_std": [
+      64,
+      81
+    ],
+    "p_zt_x_min": [
+      64,
+      81
+    ],
+    "p_zt_x_max": [
+      64,
+      81
+    ],
+    "cell_accuracy": [
+      64,
+      81
+    ],
+    "expected_cell_accuracy": [
+      81
+    ],
+    "total_accuracy": [
+      81
+    ]
+  }
+}
