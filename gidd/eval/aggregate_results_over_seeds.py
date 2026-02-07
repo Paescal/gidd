@@ -8,7 +8,7 @@ from collections import defaultdict
 # example line:
 # 0.8095,0.9680,0.0000,2025-06-18/12-51-55/checkpoints/latest/,gidd_emulate_mdlm_adaptive_score_select_update,"score_mask_position=MDM_max select_position=top_k_gumbel unmask_token=MDM_max k=1 gumbel_noise_coefficient=0 dataset=easy num_samples=6400 num_denoising_steps=81 batch_size=64 min_p=0 compile_torch=0 seed=1"
 # the seed parameter will always be present
-# TODO: aggregate accuravy and correctly_filled_cells over the seeds (mean and std) and write the results to <csv_file_name>_aggregated.csv
+
 def parse_params(params_str):
     params = {}
     for item in params_str.split():

@@ -63,7 +63,7 @@ def main(sampling_config):
     ds_path = hydra.utils.to_absolute_path(f"./gidd/datasets/sudoku_shah/{sampling_config.general_sampling.dataset}/test")
     ds = load_from_disk(ds_path)
     data_loader = _get_dataloader_with_seed(seed, ckpt_config, ds, shuffle=True, drop_last=False, batch_size=sampling_config.general_sampling.batch_size, collate_fn=partial(default_collator, ckpt_config, ckpt_tokenizer, text_key="text"), persistent_workers=False)
-    sampler = get_sampler(ckpt_config, model, ckpt_tokenizer, noise_schedule, sampling_config=sampling_config.sampling_strategy, compile_step=bool(args.compile_torch), min_p=args.min_p)
+    sampler = get_sampler(ckpt_config, model, ckpt_tokenizer, noise_schedule, sampling_config=sampling_config.sampling_strategy, min_p=args.min_p)
     
     model.eval()
     strategy_metrics = {}
@@ -102,7 +102,6 @@ def main(sampling_config):
                 pbar.update(bs)
     end_time = time.time()
     time_taken = end_time - start_time
-    # TODO: measure time, add accuracy metrics to generation_info_handler meta info
     accuracy = strategy_metrics['correct_solution'].item() / sampling_config.general_sampling.num_samples
     correctly_filled_cells = strategy_metrics['correctly_filled_cells'].item() / sampling_config.general_sampling.num_samples
     not_fully_unmasked = strategy_metrics['not_fully_unmasked'].item() / sampling_config.general_sampling.num_samples
@@ -151,7 +150,6 @@ if __name__ == "__main__":
     general_sampling_argument_group.add_argument('--num_self_correction_steps', type=int, default=81, help='Number of self-correction steps')
     general_sampling_argument_group.add_argument('--batch_size', type=int, default=64, help='Batch size')
     general_sampling_argument_group.add_argument('--min_p', type=float, default=0, help='Minimum probability to be chosen in categorical sampling')
-    general_sampling_argument_group.add_argument('--compile_torch', type=int, default=False, help='Whether to compile the torch model')
     general_sampling_argument_group.add_argument('--combinations_row', type=int, default=0, help='Row id for combinations file of current combination')
 
     sampling_strategy_argument_group = parser.add_argument_group('Sampling arguments')
@@ -195,7 +193,6 @@ if __name__ == "__main__":
             "num_self_correction_steps": args.num_self_correction_steps,
             "batch_size": args.batch_size,
             "min_p": args.min_p,
-            "compile_torch": args.compile_torch,
             "combinations_row": args.combinations_row,
         },
         "sampling_strategy": {

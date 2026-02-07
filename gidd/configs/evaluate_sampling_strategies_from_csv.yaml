@@ -1,9 +1,0 @@
-defaults:
-  - compilation: compile_torch
-  - _self_
-
-batch_size: 64
-min_p: 0.0
-input_path: ???
-output_path: ???
-shuffle_ds: False

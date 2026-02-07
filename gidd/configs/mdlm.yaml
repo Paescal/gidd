@@ -4,7 +4,6 @@ defaults:
   - model: 6M
   - optimizer: adam
   - sampling: training_sampling_mdlm_vanilla
-  - compilation: compile_torch
   - _self_
 
 model:

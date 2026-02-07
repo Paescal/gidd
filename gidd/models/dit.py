@@ -522,9 +522,6 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     try:
       using_cross_attention = config.model.puzzle_conditioning == 'cross_attention'
     except omegaconf.errors.ConfigAttributeError:
-      try:
-        using_cross_attention = config.model.use_puzzle_conditioning
-      except omegaconf.errors.ConfigAttributeError:
         using_cross_attention = False
     if using_cross_attention:
       for _ in range(config.model.n_blocks):
@@ -562,9 +559,6 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     try:
       using_cross_attention = self.config.model.puzzle_conditioning == 'cross_attention'
     except omegaconf.errors.ConfigAttributeError:
-      try:
-        using_cross_attention = self.config.model.use_puzzle_conditioning
-      except omegaconf.errors.ConfigAttributeError:
         using_cross_attention = False
     if using_cross_attention:
       context = self.vocab_embed(puzzle_conditioning)
@@ -574,13 +568,9 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     # if self.config.model.use_puzzle_conditioning:
     #   rotary_cos_sin_context = self.rotary_emb_cross(context)
 
-    # if False:
     try:
       using_cross_attention = self.config.model.puzzle_conditioning == 'cross_attention'
     except omegaconf.errors.ConfigAttributeError:
-      try:
-        using_cross_attention = self.config.model.use_puzzle_conditioning
-      except omegaconf.errors.ConfigAttributeError:
         using_cross_attention = False
     if using_cross_attention:
       for i in range(len(self.blocks_cross)):

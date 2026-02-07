@@ -1,7 +1,0 @@
-num_samples,num_denoising_steps,model,dataset,position_metric,position_strategy,token_strategy,k,gumbel
-3200,81,2025-06-11/18-28-57,easy,MDM_max,independent,MDM_max,1,0
-3200,81,2025-06-11/18-28-57,easy,MDM_max,top_k_gumbel,MDM_max,1,0
-3200,81,2025-06-11/18-28-57,easy,MDM_margin,top_k_gumbel,MDM_max,1,0
-3200,81,2025-06-11/18-28-57,hard,MDM_max,independent,MDM_max,1,0
-3200,81,2025-06-11/18-28-57,hard,MDM_max,top_k_gumbel,MDM_max,1,0
-3200,81,2025-06-11/18-28-57,hard,MDM_margin,top_k_gumbel,MDM_max,1,0

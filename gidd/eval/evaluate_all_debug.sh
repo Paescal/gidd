@@ -24,7 +24,6 @@ num_jobs=8
 num_samples=6400
 batch_size=64
 min_p=0
-compile_torch=0
 
 
 beam_search=(
@@ -538,7 +537,7 @@ if [ $build_combinations_file = true ]; then
                         for do_beam_search in "${beam_search[@]}"; do
                             if [ "$do_beam_search" = "true" ]; then
                                 current_batch_size=1
-                                general_suffix="dataset=${dataset} num_samples=$num_samples num_denoising_steps=$num_denoising_steps num_self_correction_steps=$num_self_correction_steps time_steps=$time_step batch_size=$current_batch_size min_p=$min_p compile_torch=$compile_torch seed=$seed"
+                                general_suffix="dataset=${dataset} num_samples=$num_samples num_denoising_steps=$num_denoising_steps num_self_correction_steps=$num_self_correction_steps time_steps=$time_step batch_size=$current_batch_size min_p=$min_p seed=$seed"
                                 for num_steps_before_pruning in "${steps_before_pruning[@]}"; do
                                     for num_pruning_beams in "${pruning_num_beams[@]}"; do
                                         for branching_factor in "${branching_factors[@]}"; do
@@ -556,7 +555,7 @@ if [ $build_combinations_file = true ]; then
                                 done
                             else
                                 current_batch_size=$batch_size
-                                general_suffix="dataset=${dataset} num_samples=$num_samples num_denoising_steps=$num_denoising_steps num_self_correction_steps=$num_self_correction_steps time_steps=$time_step batch_size=$current_batch_size min_p=$min_p compile_torch=$compile_torch seed=$seed"
+                                general_suffix="dataset=${dataset} num_samples=$num_samples num_denoising_steps=$num_denoising_steps num_self_correction_steps=$num_self_correction_steps time_steps=$time_step batch_size=$current_batch_size min_p=$min_p seed=$seed"
                                 beam_search_suffix="do_beam_search=false"
                                 suffix="$general_suffix $beam_search_suffix"
                                 process_checkpoints "$suffix"
